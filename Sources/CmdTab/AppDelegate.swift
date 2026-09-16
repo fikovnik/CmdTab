@@ -70,6 +70,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(withTitle: "Accessibility Settings…",
                      action: #selector(openAccessibilitySettings),
                      keyEquivalent: "").target = self
+        menu.addItem(withTitle: "Enable Window Previews…",
+                     action: #selector(enablePreviews),
+                     keyEquivalent: "").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit CmdTab", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         item.menu = menu
@@ -81,6 +84,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Diagnostics.trace("menu")
         NSWorkspace.shared.selectFile(Diagnostics.traceURL.path,
                                       inFileViewerRootedAtPath: Diagnostics.traceURL.deletingLastPathComponent().path)
+    }
+
+    /// Previews are the one feature behind Screen Recording permission. The
+    /// grant only takes effect on relaunch, because macOS caches the decision per
+    /// process, so this is a menu item rather than something done at launch.
+    @objc private func enablePreviews() {
+        WindowPreview.requestPermission()
     }
 
     @objc private func openAccessibilitySettings() {

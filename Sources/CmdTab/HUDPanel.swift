@@ -223,6 +223,13 @@ final class HUDPanel {
     /// is on screen right now. `Switcher` pages by this.
     var rowCapacity: Int { maxRows(on: activeScreen()) }
 
+    /// Where the list sits right now, for the preview to anchor beside.
+    /// `nil` while the panel is hidden, because there is nothing to sit beside.
+    var anchor: (frame: NSRect, screen: NSScreen)? {
+        guard let panel, panel.isVisible else { return nil }
+        return (panel.frame, activeScreen())
+    }
+
     func show(_ windows: [WindowRef], selected: Int, scope: String) {
         let screen = activeScreen()
         view.items = windows

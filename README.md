@@ -1,6 +1,6 @@
 # CmdTab
 
-MRU window switcher for macOS. Two shortcuts, no thumbnails.
+MRU window switcher for macOS. Two shortcuts, one thumbnail at a time.
 
 | Shortcut   | Cycles                                               | Forward | Backward |
 |------------|------------------------------------------------------|---------|----------|
@@ -70,6 +70,11 @@ Grant **System Settings → Privacy & Security → Accessibility → CmdTab**.
 The app polls once a second, so it starts working as soon as you flip the toggle,
 no relaunch needed.
 
+Thumbnails additionally need **Screen Recording**, which is the one permission
+the rest of the app does without. Menu bar → **Enable Window Previews…** asks
+for it. Unlike Accessibility, macOS caches that decision per process, so CmdTab
+has to be relaunched after granting it.
+
 Other targets: `make run` (run from `build/`), `make stop`, `make uninstall`, `make clean`.
 
 ## Signing
@@ -118,8 +123,18 @@ make reset-permissions && make install
   stacking position. GNOME's Alt+Tab spans all workspaces by default too
   (`org.gnome.shell.app-switcher current-workspace-only` defaults to `false`).
 - **Window titles**: read over the Accessibility API, not `kCGWindowName`, so
-  the app never needs Screen Recording permission. The two are correlated via
-  `_AXUIElementGetWindow`, a private-but-stable SPI (`PrivateAX.swift`).
+  everything except the thumbnails works without Screen Recording permission.
+  The two are correlated via `_AXUIElementGetWindow`, a private-but-stable SPI
+  (`PrivateAX.swift`).
+- **Previews**: `SCScreenshotManager.captureImage` against a single-window
+  `SCContentFilter`, at twice the on-screen size so the panel stays sharp on
+  Retina (`WindowPreview.swift`). Not `CGWindowListCreateImage`: deprecated
+  since macOS 14, and Sequoia nags weekly about anything still using it. Frames
+  are cached (the last five, since each runs to megabytes) so going back and
+  forth is instant, and a frame older than 2 s is shown at once and refreshed
+  behind itself. One capture runs at a time: stepping with no dwell can ask
+  faster than a screenshot completes, so requests replace each other instead of
+  piling up.
 - **Filtering**: AX subrole `AXStandardWindow` or `AXDialog`, plus a non-zero
   CGWindowID. In the default scope, `kCGWindowListOptionOnScreenOnly` also keeps
   minimized and off-Space windows out.
@@ -183,6 +198,13 @@ registry learns and when.
 
 ## Known limitations
 
+- **Previews of windows you have not visited**: a thumbnail comes from the
+  WindowServer's frame for that window, and there is no guarantee one exists for
+  a window sitting on a Space you have not been to since launch. Those rows show
+  no preview until you have seen them once. After that the cached frame stands
+  in, stale but recognisable. Minimized windows are the same story.
+- **Previews need macOS 14**: `SCScreenshotManager` arrived in Sonoma. On
+  Ventura the switcher runs as before, with no thumbnails.
 - **Secure Input**: while a password field has focus, macOS blocks all event
   taps. Shortcuts are inert until you leave the field. Nothing to do about it.
 - **Hung apps**: AX messaging timeout is 100 ms per app, so a beachballing app

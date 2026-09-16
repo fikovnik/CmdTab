@@ -13,6 +13,12 @@ enum SwitchMode {
 /// ever a hint, because releasing Cmd switches either way.
 private let revealDelay: TimeInterval = 0.25
 
+/// How long the selection must sit still, once the list is up, before the first
+/// thumbnail appears. Cycling straight past ten windows should not flash ten
+/// previews, because a preview is what you get for stopping. Paid per cycle:
+/// after the first one is up, the preview follows the selection immediately.
+private let previewDelay: TimeInterval = 0.2
+
 @MainActor
 final class Switcher {
     /// Everything one Cmd-held pass owns, bundled into a single value so that
@@ -42,8 +48,10 @@ final class Switcher {
     }
 
     private let hud = HUDPanel()
+    private let preview = WindowPreview()
     private var session: Session?
     private var revealTimer: Timer?
+    private var previewTimer: Timer?
     /// A committed session waiting for its switch to run off the event tap
     /// callback. Parked here rather than captured by the closure so the cycle
     /// can end immediately, because the keyboard must not stay swallowed for it.
@@ -92,7 +100,10 @@ final class Switcher {
             session.offset += delta
         }
         self.session = session
-        if session.wantsHUD { hud.update(selected: session.index) }
+        if session.wantsHUD {
+            hud.update(selected: session.index)
+            armPreview()
+        }
     }
 
     /// Right arrow: narrow the list to this Space and back again. The
@@ -158,13 +169,49 @@ final class Switcher {
         else { return }
         Diagnostics.note("reveal \(windows.count) windows")
         hud.show(windows, selected: session.index, scope: session.scopeLabel)
+        armPreview()
+    }
+
+    /// Move the preview to the selected row, or start the dwell timer if there
+    /// is no preview up yet. The delay guards the *first* thumbnail of a cycle.
+    /// Once one is on screen, waiting again only makes the panel blink.
+    private func armPreview() {
+        previewTimer?.invalidate()
+        previewTimer = nil
+
+        if preview.isShowing {
+            showPreview()
+            return
+        }
+
+        guard let session, session.wantsHUD,
+              let windows = session.windows, !windows.isEmpty
+        else { return }
+
+        // Same run loop mode as the reveal timer: the event tap pumps common
+        // modes while Cmd is held, and a default-mode timer would never fire.
+        let timer = Timer(timeInterval: previewDelay, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.showPreview() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        previewTimer = timer
+    }
+
+    private func showPreview() {
+        guard let session, let windows = session.windows, !windows.isEmpty,
+              let anchor = hud.anchor
+        else { return }
+        preview.show(windows[session.index], anchor: anchor.frame, on: anchor.screen)
     }
 
     /// Drop the cycle. One assignment, so no field can be left behind.
     private func end() {
         revealTimer?.invalidate()
         revealTimer = nil
+        previewTimer?.invalidate()
+        previewTimer = nil
         session = nil
+        preview.hide()
         hud.hide()
     }
 
@@ -184,6 +231,7 @@ final class Switcher {
         self.session = session
 
         if found.isEmpty {
+            preview.hide()
             hud.hide()
         } else {
             showHUD()
