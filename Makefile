@@ -2,20 +2,29 @@ APP_NAME  := CmdTab
 BUNDLE_ID := com.krikava.cmdtab
 APP       := build/$(APP_NAME).app
 
-.PHONY: all build app install uninstall run stop reset-permissions clean
+# Stable code-signing identity, created on demand by scripts/make-cert.sh.
+# An ad-hoc signature pins the designated requirement to the binary's cdhash,
+# so macOS drops the Accessibility grant on every rebuild. A certificate makes
+# the requirement `identifier ... and certificate leaf ...`, which does not move.
+IDENTITY := CmdTab Self-Signed
+
+.PHONY: all cert build app install uninstall run stop reset-permissions clean
 
 all: app
+
+cert:
+	@./scripts/make-cert.sh "$(IDENTITY)"
 
 build:
 	swift build -c release
 
-app: build
+app: cert build
 	rm -rf $(APP)
 	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources
 	cp .build/release/$(APP_NAME) $(APP)/Contents/MacOS/
 	cp Resources/Info.plist $(APP)/Contents/Info.plist
-	codesign --force --sign - --identifier $(BUNDLE_ID) $(APP)
-	@echo "built $(APP)"
+	codesign --force --sign "$(IDENTITY)" --identifier $(BUNDLE_ID) $(APP)
+	@codesign -d -r- $(APP) 2>&1 | grep designated
 
 install: app stop
 	rm -rf /Applications/$(APP_NAME).app
@@ -31,9 +40,9 @@ run: app stop
 stop:
 	-@pkill -x $(APP_NAME) 2>/dev/null; true
 
-# Ad-hoc signatures change on every rebuild, so macOS treats the new binary as a
-# different program and drops its Accessibility grant. Run this, then re-add the
-# app under System Settings > Privacy & Security > Accessibility.
+# Only needed to clear a grant made against a *different* signing identity,
+# i.e. the one-time migration off ad-hoc signing, or if you delete the
+# certificate. Ordinary rebuilds keep their permission.
 reset-permissions:
 	tccutil reset Accessibility $(BUNDLE_ID)
 

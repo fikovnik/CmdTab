@@ -9,6 +9,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         installStatusItem()
+        WindowRegistry.shared.start()
+
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main
+        ) { _ in
+            Diagnostics.trace("activeSpaceDidChange")
+        }
 
         if requestAccessibility() {
             startTap()
@@ -42,6 +49,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         item.button?.title = "⇥…"
 
         let menu = NSMenu()
+        menu.addItem(withTitle: "Write Diagnostics",
+                     action: #selector(writeDiagnostics),
+                     keyEquivalent: "").target = self
         menu.addItem(withTitle: "Accessibility Settings…",
                      action: #selector(openAccessibilitySettings),
                      keyEquivalent: "").target = self
@@ -50,6 +60,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         item.menu = menu
 
         statusItem = item
+    }
+
+    @objc private func writeDiagnostics() {
+        Diagnostics.trace("menu")
+        NSWorkspace.shared.selectFile(Diagnostics.traceURL.path,
+                                      inFileViewerRootedAtPath: Diagnostics.traceURL.deletingLastPathComponent().path)
     }
 
     @objc private func openAccessibilitySettings() {

@@ -1,0 +1,84 @@
+import AppKit
+
+typealias CGSConnectionID = Int32
+typealias CGSSpaceID = UInt64
+
+/// kCGSSpaceCurrent | kCGSSpaceOther | kCGSSpaceAll
+private let allSpacesMask: Int32 = 7
+
+@_silgen_name("CGSMainConnectionID")
+private func CGSMainConnectionID() -> CGSConnectionID
+
+@_silgen_name("CGSCopyManagedDisplaySpaces")
+private func CGSCopyManagedDisplaySpaces(_ cid: CGSConnectionID) -> Unmanaged<CFArray>?
+
+@_silgen_name("CGSCopySpacesForWindows")
+private func CGSCopySpacesForWindows(_ cid: CGSConnectionID,
+                                     _ mask: Int32,
+                                     _ windowIDs: CFArray) -> Unmanaged<CFArray>?
+
+/// Which Space a window lives on, what to call that Space, and how the Spaces
+/// are ordered left to right.
+///
+/// None of this has a public API. These are the same CGS SPIs every macOS
+/// window switcher relies on, and they have been stable since Spaces shipped.
+///
+/// The sibling SPI `CGSCopyWindowsWithOptionsAndTags` looks like a cheaper fit
+/// (one call per Space instead of one per window) but it silently omits
+/// minimized windows, which are exactly the ones you cannot reach any other way.
+final class SpaceMap {
+    private let connection = CGSMainConnectionID()
+    private var labels: [CGSSpaceID: String] = [:]
+    private var ranks: [CGSSpaceID: Int] = [:]
+    private var cache: [CGWindowID: CGSSpaceID?] = [:]
+
+    init() {
+        guard let raw = CGSCopyManagedDisplaySpaces(connection)?.takeRetainedValue(),
+              let displays = raw as? [[String: Any]]
+        else { return }
+
+        let multipleDisplays = displays.count > 1
+        var rank = 0
+
+        for (displayIndex, display) in displays.enumerated() {
+            guard let spaces = display["Spaces"] as? [[String: Any]] else { continue }
+            var desktopNumber = 0
+
+            for space in spaces {
+                guard let id = (space["ManagedSpaceID"] as? NSNumber)?.uint64Value else { continue }
+
+                // type 0 is a normal desktop. Anything else is a full-screen Space.
+                var label: String
+                if (space["type"] as? NSNumber)?.intValue ?? 0 == 0 {
+                    desktopNumber += 1
+                    label = "Desktop \(desktopNumber)"
+                } else {
+                    label = "Full Screen"
+                }
+                if multipleDisplays { label += " · Display \(displayIndex + 1)" }
+
+                labels[id] = label
+                ranks[id] = rank
+                rank += 1
+            }
+        }
+    }
+
+    func space(forWindow window: CGWindowID) -> CGSSpaceID? {
+        if let cached = cache[window] { return cached }
+        let ids = CGSCopySpacesForWindows(connection, allSpacesMask, [window] as CFArray)?
+            .takeRetainedValue() as? [NSNumber]
+        let result = ids?.first?.uint64Value
+        cache[window] = result
+        return result
+    }
+
+    func label(forWindow window: CGWindowID) -> String? {
+        space(forWindow: window).flatMap { labels[$0] }
+    }
+
+    /// Left-to-right position of a window's Space, used to group the list.
+    func rank(forWindow window: CGWindowID) -> Int {
+        space(forWindow: window).flatMap { ranks[$0] } ?? .max
+    }
+}

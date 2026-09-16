@@ -11,6 +11,9 @@ final class Switcher {
     private let hud = HUDPanel()
     private(set) var mode: SwitchMode?
     private var windows: [WindowRef] = []
+    /// False: current Space only. True: every Space, set by Esc mid-cycle.
+    private var allSpaces = false
+    private var appFilter: pid_t?
     /// Unbounded step counter, wrapped into `windows` only when rendering.
     /// Lets steps arrive before the (async) window scan has finished.
     private var offset = 0
@@ -24,15 +27,16 @@ final class Switcher {
 
     func start(_ mode: SwitchMode) {
         guard self.mode == nil else { return }
-
         self.mode = mode
+        allSpaces = false
         offset = 1
+        appFilter = mode == .currentApp ? NSWorkspace.shared.frontmostApplication?.processIdentifier : nil
 
         // Scanning windows over the Accessibility API can take tens of
         // milliseconds. Defer it so the event tap callback returns immediately
         // and the system never disables the tap for exceeding its budget.
         DispatchQueue.main.async { [weak self] in
-            self?.loadWindows(for: mode)
+            self?.reload()
         }
     }
 
@@ -41,6 +45,19 @@ final class Switcher {
         guard mode != nil else { return }
         offset += delta
         hud.update(selected: index)
+    }
+
+    /// Esc: widen the list to every Space and back again. The current Space's
+    /// windows stay at the head of the widened list, so the highlighted window
+    /// never moves under you.
+    func toggleAllSpaces() {
+        guard mode != nil else { return }
+        allSpaces.toggle()
+        // Same reason as `start`: widening walks every app over the
+        // Accessibility API, far too slow to do inside the event tap callback.
+        DispatchQueue.main.async { [weak self] in
+            self?.reload()
+        }
     }
 
     func commit() {
@@ -56,28 +73,34 @@ final class Switcher {
     private func reset() {
         mode = nil
         windows = []
+        allSpaces = false
+        appFilter = nil
         offset = 0
         hud.hide()
     }
 
-    private func loadWindows(for mode: SwitchMode) {
-        guard self.mode != nil else { return }
+    private func reload() {
+        guard mode != nil else { return }
 
-        switch mode {
-        case .allWindows:
-            windows = WindowEnumerator.currentSpaceWindowsMRU()
-        case .currentApp:
-            guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier else {
-                windows = []
-                return
-            }
-            windows = WindowEnumerator.windowsMRU(forPID: pid)
-        }
+        let selectedID = windows.isEmpty ? nil : windows[index].id
 
-        guard windows.count > 1 else {
+        var found = allSpaces
+            ? WindowEnumerator.allSpacesWindowsMRU()
+            : WindowEnumerator.currentSpaceWindowsMRU()
+        if let appFilter { found = found.filter { $0.pid == appFilter } }
+
+        guard found.count > 1 else {
             // Nothing to switch to. Stay silent rather than flashing an empty HUD.
             windows = []
+            hud.hide()
             return
+        }
+        windows = found
+
+        // Keep the highlight on the same window across a scope change. If it
+        // fell out of the narrowed list, fall back to the frontmost window.
+        if let selectedID {
+            offset = windows.firstIndex(where: { $0.id == selectedID }) ?? 0
         }
         hud.show(windows, selected: index)
     }

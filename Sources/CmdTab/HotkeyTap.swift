@@ -65,6 +65,8 @@ final class HotkeyTap {
             if type == .keyDown {
                 switch key {
                 case kVK_Escape:
+                    switcher.toggleAllSpaces()
+                case kVK_ANSI_Period:
                     switcher.cancel()
                 case kVK_Tab:
                     switcher.step(tabDirection)
