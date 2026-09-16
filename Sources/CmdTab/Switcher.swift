@@ -13,45 +13,63 @@ enum SwitchMode {
 /// ever a hint, because releasing Cmd switches either way.
 private let revealDelay: TimeInterval = 0.25
 
+@MainActor
 final class Switcher {
-    private let hud = HUDPanel()
-    private(set) var mode: SwitchMode?
-    private var windows: [WindowRef] = []
-    private var allSpaces = false
-    private var appFilter: pid_t?
-    /// Unbounded step counter, wrapped into `windows` only when rendering.
-    /// Lets steps arrive before the (async) window scan has finished.
-    private var offset = 0
-    private var revealTimer: Timer?
+    /// Everything one Cmd-held pass owns, bundled into a single value so that
+    /// ending a cycle is one assignment and cannot leave a field behind.
+    private struct Session {
+        let mode: SwitchMode
+        /// Set in `.currentApp` mode: only this process's windows are listed.
+        let appFilter: pid_t?
+        /// Unbounded step counter, folded into `windows` only when rendering.
+        /// Lets steps arrive before the (deferred) window scan has finished.
+        var offset: Int
+        var scope = WindowScope.allSpaces
+        /// `nil` until the scan lands, distinct from an empty list, which means
+        /// the scan ran and found nothing worth switching to.
+        var windows: [WindowRef]?
+        /// Set once Cmd has been held past `revealDelay`. The list is shown as
+        /// soon as both this and a scanned list are true, in whichever order
+        /// they happen to arrive.
+        var wantsHUD = false
 
-    /// Set once Cmd has been held past `revealDelay`. The list is shown as soon
-    /// as both this and a loaded window list are true, in whichever order they
-    /// happen to arrive.
-    private var wantsHUD = false
+        var scopeLabel: String { scope == .allSpaces ? "All Spaces" : "This Space" }
 
-    var isCycling: Bool { mode != nil }
-    var pageSize: Int { hud.pageSize }
-
-    private var index: Int {
-        guard !windows.isEmpty else { return 0 }
-        return ((offset % windows.count) + windows.count) % windows.count
+        var index: Int {
+            guard let windows, !windows.isEmpty else { return 0 }
+            return ((offset % windows.count) + windows.count) % windows.count
+        }
     }
 
-    private var scopeLabel: String { allSpaces ? "All Spaces" : "This Space" }
+    private let hud = HUDPanel()
+    private var session: Session?
+    private var revealTimer: Timer?
+    /// A committed session waiting for its switch to run off the event tap
+    /// callback. Parked here rather than captured by the closure so the cycle
+    /// can end immediately, because the keyboard must not stay swallowed for it.
+    private var pendingSwitch: Session?
 
-    func start(_ mode: SwitchMode) {
-        guard self.mode == nil else { return }
-        self.mode = mode
-        allSpaces = false
-        wantsHUD = false
-        offset = 1
-        appFilter = mode == .currentApp ? NSWorkspace.shared.frontmostApplication?.processIdentifier : nil
-        Diagnostics.note("start \(mode)")
+    var isCycling: Bool { session != nil }
+    var mode: SwitchMode? { session?.mode }
+
+    /// Rows the panel can show at once, so PgUp/PgDn move by exactly one
+    /// screenful. Derived from the screen and the current list rather than from
+    /// what the HUD last drew, so it is right even while the panel is hidden.
+    var pageSize: Int { max(1, min(session?.windows?.count ?? 1, hud.rowCapacity)) }
+
+    func start(_ mode: SwitchMode, reversed: Bool) {
+        guard session == nil else { return }
+        session = Session(
+            mode: mode,
+            appFilter: mode == .currentApp ? NSWorkspace.shared.frontmostApplication?.processIdentifier : nil,
+            offset: reversed ? -1 : 1
+        )
+        Diagnostics.note("start \(mode) reversed=\(reversed)")
 
         // .common, not the default mode: the event tap's run loop source uses
         // common modes, and the timer must still fire while it is pumping.
         let timer = Timer(timeInterval: revealDelay, repeats: false) { [weak self] _ in
-            self?.reveal()
+            MainActor.assumeIsolated { self?.reveal() }
         }
         RunLoop.main.add(timer, forMode: .common)
         revealTimer = timer
@@ -60,103 +78,131 @@ final class Switcher {
         // milliseconds. Defer it so the event tap callback returns immediately
         // and the system never disables the tap for exceeding its budget.
         DispatchQueue.main.async { [weak self] in
-            self?.reload()
+            MainActor.assumeIsolated { self?.reload() }
         }
     }
 
     /// `delta` is +1 forward through the list, -1 backward. Page moves clamp at
     /// the ends. Single steps wrap, the way a switcher is expected to.
     func step(_ delta: Int, wrap: Bool = true) {
-        guard mode != nil else { return }
-        if wrap || windows.isEmpty {
-            offset += delta
+        guard var session else { return }
+        if !wrap, let windows = session.windows, !windows.isEmpty {
+            session.offset = max(0, min(session.index + delta, windows.count - 1))
         } else {
-            offset = max(0, min(index + delta, windows.count - 1))
+            session.offset += delta
         }
-        if wantsHUD { hud.update(selected: index) }
+        self.session = session
+        if session.wantsHUD { hud.update(selected: session.index) }
     }
 
-    /// Right arrow: widen the list to every Space and back again. The current
-    /// Space's windows stay at the head of the widened list, so the highlighted
-    /// window never moves under you.
-    func toggleAllSpaces() {
-        guard mode != nil else { return }
-        allSpaces.toggle()
-        // Same reason as `start`: widening walks every app over the
-        // Accessibility API, far too slow to do inside the event tap callback.
+    /// Right arrow: narrow the list to this Space and back again. The
+    /// highlighted window is preserved by id across the flip (see `reload`), so
+    /// the selection never moves under you.
+    func toggleScope() {
+        guard var session else { return }
+        session.scope = session.scope == .allSpaces ? .currentSpace : .allSpaces
+        self.session = session
+        // Same reason as `start`: rescanning talks to the Accessibility API,
+        // far too slow to do inside the event tap callback.
         DispatchQueue.main.async { [weak self] in
-            self?.reload()
+            MainActor.assumeIsolated { self?.reload() }
         }
     }
 
+    /// Switch to the highlighted window and end the cycle.
+    ///
+    /// Called from the event tap callback, so the switch itself is deferred: an
+    /// AX scan or a focus round-trip inside the callback is exactly what gets a
+    /// tap disabled for overrunning its budget, and a disabled tap drops the
+    /// events this switcher needs to see.
     func commit() {
-        defer { reset() }
-        guard mode != nil else { return }
+        guard let session else { return }
+        pendingSwitch = session
+        end()
 
-        // The scan is deferred off the event tap callback, so a quick enough
-        // Cmd+Tab can release the key before it has landed. Finish it here
-        // rather than silently dropping the switch.
-        if windows.isEmpty { reload() }
-
-        guard !windows.isEmpty else {
-            Diagnostics.note("commit: nothing to switch to")
-            return
+        DispatchQueue.main.async { [weak self] in
+            MainActor.assumeIsolated { self?.performSwitch() }
         }
-        Diagnostics.note("commit index=\(index) of \(windows.count)")
-        WindowEnumerator.focus(windows[index])
     }
 
     func cancel() {
-        reset()
+        end()
+    }
+
+    private func performSwitch() {
+        guard var session = pendingSwitch else { return }
+        pendingSwitch = nil
+
+        // A quick enough Cmd+Tab releases the key before the deferred scan has
+        // landed. Finish it here rather than silently dropping the switch.
+        if session.windows == nil { session.windows = Switcher.scan(session) }
+
+        guard let windows = session.windows, !windows.isEmpty else {
+            Diagnostics.note("commit: nothing to switch to")
+            return
+        }
+        Diagnostics.note("commit index=\(session.index) of \(windows.count)")
+        WindowEnumerator.focus(windows[session.index])
     }
 
     private func reveal() {
-        guard mode != nil else { return }
-        wantsHUD = true
+        guard var session else { return }
+        session.wantsHUD = true
+        self.session = session
         showHUD()
     }
 
     private func showHUD() {
-        guard wantsHUD, !windows.isEmpty else { return }
+        guard let session, session.wantsHUD,
+              let windows = session.windows, !windows.isEmpty
+        else { return }
         Diagnostics.note("reveal \(windows.count) windows")
-        hud.show(windows, selected: index, scope: scopeLabel)
+        hud.show(windows, selected: session.index, scope: session.scopeLabel)
     }
 
-    private func reset() {
+    /// Drop the cycle. One assignment, so no field can be left behind.
+    private func end() {
         revealTimer?.invalidate()
         revealTimer = nil
-        mode = nil
-        windows = []
-        allSpaces = false
-        appFilter = nil
-        offset = 0
-        wantsHUD = false
+        session = nil
         hud.hide()
     }
 
     private func reload() {
-        guard mode != nil else { return }
+        guard var session else { return }
 
-        let selectedID = windows.isEmpty ? nil : windows[index].id
-
-        var found = allSpaces
-            ? WindowEnumerator.allSpacesWindowsMRU()
-            : WindowEnumerator.currentSpaceWindowsMRU()
-        if let appFilter { found = found.filter { $0.pid == appFilter } }
-
-        guard found.count > 1 else {
-            windows = []
-            hud.hide()
-            return
-        }
-        windows = found
-        Diagnostics.note("loaded \(windows.count) (allSpaces=\(allSpaces))")
+        let previous = session.windows.flatMap { $0.isEmpty ? nil : $0[session.index].id }
+        let found = Switcher.scan(session)
+        session.windows = found
+        Diagnostics.note("loaded \(found.count) (scope=\(session.scope))")
 
         // Keep the highlight on the same window across a scope change. If it
         // fell out of the narrowed list, fall back to the frontmost window.
-        if let selectedID {
-            offset = windows.firstIndex(where: { $0.id == selectedID }) ?? 0
+        if let previous {
+            session.offset = found.firstIndex { $0.id == previous } ?? 0
         }
-        showHUD()
+        self.session = session
+
+        if found.isEmpty {
+            hud.hide()
+        } else {
+            showHUD()
+        }
+    }
+
+    /// The window list for a session's scope, most-recently-used first. Talks
+    /// to the Accessibility API, so it never runs on the tap callback. A list of
+    /// one is returned empty: there is nothing to switch to.
+    private static func scan(_ session: Session) -> [WindowRef] {
+        // Stamp the window being left first. Runs on the turn after the keypress,
+        // so nothing can have stolen focus in between, and it is what lets the
+        // next cycle find this window one below the top, on any Space.
+        WindowRegistry.shared.promoteFrontWindow()
+
+        var found = WindowEnumerator.windows(session.scope)
+        if let pid = session.appFilter {
+            found = found.filter { $0.pid == pid }
+        }
+        return found.count > 1 ? found : []
     }
 }

@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let switcher = Switcher()
     private lazy var tap = HotkeyTap(switcher: switcher)
@@ -14,8 +15,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main
         ) { _ in
-            guard Diagnostics.autoTraceEnabled else { return }
-            Diagnostics.trace("activeSpaceDidChange")
+            MainActor.assumeIsolated {
+                guard Diagnostics.autoTraceEnabled else { return }
+                Diagnostics.trace("activeSpaceDidChange")
+            }
         }
 
         if requestAccessibility() {
@@ -25,15 +28,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             permissionTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] timer in
                 guard AXIsProcessTrusted() else { return }
                 timer.invalidate()
-                self?.permissionTimer = nil
-                self?.startTap()
+                MainActor.assumeIsolated {
+                    self?.permissionTimer = nil
+                    self?.startTap()
+                }
             }
         }
     }
 
+    /// The event tap holds an unretained pointer to `tap`, so tear it down
+    /// deliberately rather than leaving the order to process teardown.
+    func applicationWillTerminate(_ notification: Notification) {
+        tap.stop()
+    }
+
     private func requestAccessibility() -> Bool {
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
-        return AXIsProcessTrustedWithOptions(options as CFDictionary)
+        // Spelled out because `kAXTrustedCheckOptionPrompt` is imported as a
+        // mutable global, which Swift 6 will not let us read. Its value has been
+        // this string since the option existed.
+        let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
+        return AXIsProcessTrustedWithOptions(options)
     }
 
     private func startTap() {

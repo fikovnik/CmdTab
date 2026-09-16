@@ -4,13 +4,17 @@ MRU window switcher for macOS. Two shortcuts, no thumbnails.
 
 | Shortcut   | Cycles                                               | Forward | Backward |
 |------------|------------------------------------------------------|---------|----------|
-| `Cmd+Tab`  | All windows on the current Space, across all screens  | `Tab`   | `` ` ``  |
-| ``Cmd+` `` | Windows of the frontmost app only                     | `` ` `` | `Tab`    |
+| `Cmd+Tab`  | Every window, on every Space                           | `Tab`   | `` ` ``  |
+| ``Cmd+` `` | Windows of the frontmost app, on every Space          | `` ` `` | `Tab`    |
 
 ### How it behaves
 
 Hold `Cmd`, press the cycle key as many times as you like, release `Cmd` to
 switch. Nothing is raised until you release, so cycling never flickers.
+
+The list spans every Space, ordered by when you last used each window, so a
+second `Cmd+Tab` always goes back to where you came from, even when that means
+crossing a Space. `→` narrows the list to the Space in front of you.
 
 The list is only a hint. Release within **250 ms** and it never appears: a
 quick `Cmd+Tab` switches with nothing drawn on screen. Hold longer and it fades
@@ -39,9 +43,10 @@ While `Cmd` is down:
 | `Tab` / `` ` ``      | Move in the direction the shortcut opened with    |
 | `↑` `↓`              | Move one row (wraps)                              |
 | `PgUp` `PgDn`        | Move one screenful (stops at the ends)            |
-| `→`                  | Toggle between this Space and **all** Spaces      |
+| `→`                  | Narrow the list to **this** Space (`→` again undoes) |
 | `Return`             | Switch now, without waiting for the key release   |
 | `Esc`                | Dismiss without switching                         |
+| `Shift`              | Reverses `Tab` / `` ` ``, opening the cycle too   |
 
 The footer counts windows and apps, and a scroll bar appears once the list is
 longer than fits.
@@ -57,7 +62,7 @@ luminance, since the accent can be anything from navy to yellow.
 ## Build & install
 
 ```sh
-make install     # builds, ad-hoc signs, copies to /Applications
+make install     # builds, signs with the self-signed cert, copies to /Applications
 open /Applications/CmdTab.app
 ```
 
@@ -97,9 +102,21 @@ make reset-permissions && make install
 
 - **Hotkeys**: a `CGEventTap` at `.cgSessionEventTap` head-inserts ahead of the
   system switcher and swallows the chord (`HotkeyTap.swift`).
-- **MRU order**: derived from the `CGWindowList` front-to-back z-order rather
-  than from tracking focus events. macOS raises a window when it is focused, so
-  z-order *is* MRU, and it cannot go stale or leak (`WindowEnumerator.swift`).
+- **MRU order**: within one Space, from the `CGWindowList` front-to-back
+  z-order: macOS raises a window when it is focused, so z-order *is* MRU there,
+  and it cannot go stale or leak. Across Spaces there is no z-order to read, because
+  two windows on different Spaces are never on screen together. So each window
+  also carries a monotonic **use stamp**, set when a cycle leaves it and when a
+  cycle lands on it (`WindowRegistry.swift`). Windows never seen in use sort
+  below the stamped ones, by z-order, then Space, then app name, so a freshly
+  launched CmdTab shows the list it always did, and converges on true MRU as you
+  use it.
+
+  Same trade GNOME makes. Mutter keeps an explicit per-workspace MRU list updated
+  on focus (`meta_window_make_most_recent`), and builds the cross-workspace list
+  by sorting *every* window on `meta_window_get_user_time()`, a timestamp, not a
+  stacking position. GNOME's Alt+Tab spans all workspaces by default too
+  (`org.gnome.shell.app-switcher current-workspace-only` defaults to `false`).
 - **Window titles**: read over the Accessibility API, not `kCGWindowName`, so
   the app never needs Screen Recording permission. The two are correlated via
   `_AXUIElementGetWindow`, a private-but-stable SPI (`PrivateAX.swift`).
@@ -108,6 +125,11 @@ make reset-permissions && make install
   minimized and off-Space windows out.
 - **Spaces**: `CGSCopyManagedDisplaySpaces` for the layout and labels, then
   `CGSCopySpacesForWindows` per window for membership (`CGSSpaces.swift`).
+- **Bootstrap**: `CGSCopyWindowsWithOptionsAndTags` lists a Space's windows
+  without going there, which AX cannot do. It counts utility panels as windows
+  (Lightroom: twelve, against the one real window AX reports), so it is trusted
+  only for the question it answers reliably: *which apps* own windows on which
+  Space. That is what the placeholder rows are built from, below.
 
 ### Why there is a registry
 
@@ -140,6 +162,12 @@ Menu bar → **Write Diagnostics** appends to:
 ~/Library/Logs/CmdTab/trace.log
 ```
 
+Or on stdout, with no GUI session, which is how the numbers above were measured:
+
+```sh
+/Applications/CmdTab.app/Contents/MacOS/CmdTab --report
+```
+
 To also capture one automatically on every Space change, the only way to see
 what the registry learns and when, create the marker file. It costs a full
 Accessibility walk per Space switch, so it is off by default:
@@ -159,14 +187,21 @@ registry learns and when.
   taps. Shortcuts are inert until you leave the field. Nothing to do about it.
 - **Hung apps**: AX messaging timeout is 100 ms per app, so a beachballing app
   can add up to that much latency to opening the switcher.
-- **Unvisited Spaces**: a Space this app has not seen since launch contributes
-  nothing to the widened list. Visit it once and its windows are remembered.
-  Unavoidable: macOS will not report them from anywhere else.
+- **Unvisited Spaces**: `kAXWindowsAttribute` describes a Space only while you
+  are standing on it, so a Space not visited since launch appears as one row per
+  *app* instead of one per window, with no titles. Switching to such a row
+  activates the app, which lands on that Space. The refresh that follows learns
+  its windows for real, so the next cycle aims at individual windows. Without
+  these rows the all-Spaces default could not bootstrap itself, since you cannot
+  switch to a Space whose windows are invisible.
 - **Stale titles off-Space**: a remembered window keeps the title it had when
   last seen, refreshed next time you visit its Space.
-- **Full-screen apps**: a full-screen window is its own Space, so `Cmd+Tab`
-  there sees only that window. `Esc` widens the list to everything else.
-- **Widening cost**: `Esc` walks every app over the Accessibility API, ~165 ms
-  on a typical session against ~60 ms for the default scope. Fine for a
-  deliberate keypress, too slow for every `Cmd+Tab`, which is why it is opt-in.
-  It runs off the event-tap callback, so a slow app cannot get the tap disabled.
+- **Full-screen apps**: a full-screen window is its own Space, so pressing `→`
+  there narrows the list to that one window. Without it you see everything, as
+  everywhere else.
+- **Cost of the all-Spaces default**: a keypress pays for a live `CGWindowList`
+  scan of the current Space plus a dictionary read, measured at 20-45 ms against
+  3-19 ms for the narrowed scope on a 30-window session. The full Accessibility
+  walk that populates the registry is *not* on that path. It runs coalesced off
+  app-activation and Space-change notifications. Everything the switcher does
+  runs off the event-tap callback, so a slow app cannot get the tap disabled.

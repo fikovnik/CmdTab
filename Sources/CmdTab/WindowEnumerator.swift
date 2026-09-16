@@ -1,80 +1,128 @@
 import AppKit
 import ApplicationServices
 
-struct WindowRef {
+struct WindowRef: Identifiable {
     let id: CGWindowID
     let pid: pid_t
     let appName: String
     var title: String
-    let element: AXUIElement
+    /// `nil` for a placeholder row, an app we know has a window on a Space we
+    /// have never visited, so AX has never described it. See `placeholders`.
+    let element: AXUIElement?
     let icon: NSImage?
     /// "Desktop 2", "Full Screen", … Only populated in all-Spaces mode.
     var spaceLabel: String?
 }
 
+/// Which windows the switcher lists.
+enum WindowScope {
+    /// Every window on every Space, newest-used first. The default: "go back to
+    /// the window I came from" has to keep working across a Space boundary.
+    case allSpaces
+    /// Only what is on the Space in front of you, across all screens.
+    case currentSpace
+}
+
+@MainActor
 enum WindowEnumerator {
 
-    /// Windows visible on the current Space, across all screens, most-recently-used first.
+    /// The switcher list for `scope`, most-recently-used first.
     ///
-    /// MRU is derived from the `CGWindowList` front-to-back z-order rather than
-    /// from bookkeeping of focus events: macOS raises a window when it is
-    /// focused, so z-order *is* MRU, and it cannot go stale or leak.
-    static func currentSpaceWindowsMRU() -> [WindowRef] {
-        resolve(candidates(onScreenOnly: true))
-    }
+    /// Both scopes start from a live `CGWindowList` scan of the current Space.
+    /// That scan is the only source that sees windows created since the last
+    /// registry refresh, and within one Space its front-to-back z-order *is*
+    /// MRU, because macOS raises a window when it is focused.
+    ///
+    /// Across Spaces there is no z-order to read (two windows on different
+    /// Spaces are never on screen together), so ordering falls to the use
+    /// stamps the registry keeps. See `Rank` below.
+    ///
+    /// AX, not `CGWindowList`, is the source of truth for off-Space windows.
+    /// Off-screen `CGWindowList` entries are mostly compositing surfaces whose
+    /// IDs match no AX window at all, and a single Chrome window can show up as
+    /// twenty of them, and a minimized window's real ID never appears on screen.
+    static func windows(_ scope: WindowScope) -> [WindowRef] {
+        let candidates = candidates(onScreenOnly: true)
+        let onSpace = resolve(candidates)
 
-    /// Every window on every Space, including minimized ones.
-    ///
-    /// The current Space's windows keep their z-order MRU and stay at the head
-    /// of the list, so widening the scope mid-cycle never moves the selection.
-    /// Everything else comes from the Accessibility API, grouped by Space.
-    ///
-    /// AX has to be the source of truth here, not `CGWindowList`. Off-screen
-    /// `CGWindowList` entries are mostly compositing surfaces whose IDs match no
-    /// AX window at all (a single Chrome window can show up as twenty of them)
-    /// and a minimized window's real ID does not appear on screen in any form.
-    static func allSpacesWindowsMRU() -> [WindowRef] {
-        WindowRegistry.shared.refresh()
+        let registry = WindowRegistry.shared
+        registry.learn(onSpace)
+
+        guard scope == .allSpaces else { return onSpace }
+
+        // Cheap enough for a keypress: one CGWindowList call, no AX traffic.
+        // The full AX walk stays on the notification path, so a window opened on
+        // another Space can lag by one refresh cycle.
+        let owners = liveWindowOwners()
+        registry.evictClosed(live: Set(owners.keys))
 
         var zOrder: [CGWindowID: Int] = [:]
-        for (position, candidate) in candidates(onScreenOnly: true).enumerated() {
+        for (position, candidate) in candidates.enumerated() {
             zOrder[candidate.id] = position
         }
 
-        let known = WindowRegistry.shared.all
-        let front = known
-            .filter { zOrder[$0.id] != nil }
-            .sorted { zOrder[$0.id]! < zOrder[$1.id]! }
+        let known = registry.all
+        var result = (known + registry.placeholders(besides: known, owners: owners))
+            .map { (rank: rank(of: $0, zOrder: zOrder, registry: registry), window: $0) }
+            .sorted { $0.rank < $1.rank }
+            .map(\.window)
 
-        // Nothing off-Space has a meaningful z-order, so group by Space and keep
-        // each app's windows together.
-        let spaces = SpaceMap()
-        let rest = known
-            .filter { zOrder[$0.id] == nil }
-            .sorted { lhs, rhs in
-                let left = spaces.rank(forWindow: lhs.id)
-                let right = spaces.rank(forWindow: rhs.id)
-                if left != right { return left < right }
-                if lhs.appName != rhs.appName {
-                    return lhs.appName.localizedCaseInsensitiveCompare(rhs.appName) == .orderedAscending
-                }
-                return lhs.id < rhs.id
-            }
-
-        var result = front + rest
         for index in result.indices {
-            result[index].spaceLabel = spaces.label(forWindow: result[index].id)
+            result[index].spaceLabel = registry.spaceLabel(forWindow: result[index].id)
         }
         return result
     }
 
-    /// Every window the WindowServer still knows about, in any state. Used to
-    /// evict registry entries for windows that have been closed.
-    static func liveWindowIDs() -> Set<CGWindowID> {
-        guard let infoList = CGWindowListCopyWindowInfo([], kCGNullWindowID) as? [[String: Any]] else {
-            return []
+    /// Sort key for the merged list.
+    ///
+    /// Windows that have been seen in use come first, newest first. Everything
+    /// else keeps the ordering this app shipped with (current-Space z-order,
+    /// then Space left to right, then app), which is exactly what a freshly
+    /// launched CmdTab shows before any stamp exists. So the list starts out
+    /// looking like it always did and converges on true MRU as you use it.
+    private struct Rank: Comparable {
+        /// 0 = seen in use, 1 = never seen. Not a Bool: Bool is not Comparable.
+        let tier: Int
+        /// Inverted stamp, so the newest use sorts first.
+        let recency: UInt64
+        let zOrder: Int
+        let spaceRank: Int
+        let appName: String
+        let id: CGWindowID
+
+        static func < (lhs: Rank, rhs: Rank) -> Bool {
+            (lhs.tier, lhs.recency, lhs.zOrder, lhs.spaceRank, lhs.appName, lhs.id)
+                < (rhs.tier, rhs.recency, rhs.zOrder, rhs.spaceRank, rhs.appName, rhs.id)
         }
-        return Set(infoList.compactMap { $0[kCGWindowNumber as String] as? CGWindowID })
+    }
+
+    private static func rank(of window: WindowRef,
+                             zOrder: [CGWindowID: Int],
+                             registry: WindowRegistry) -> Rank {
+        let stamp = registry.stamp(of: window.id)
+        return Rank(tier: stamp == nil ? 1 : 0,
+                    recency: stamp.map { UInt64.max - $0 } ?? 0,
+                    zOrder: zOrder[window.id] ?? .max,
+                    spaceRank: registry.spaceRank(forWindow: window.id),
+                    appName: window.appName.lowercased(),
+                    id: window.id)
+    }
+
+    /// Every window the WindowServer still knows about, in any state, with its
+    /// owning process. Evicts closed registry entries, and tells the placeholder
+    /// pass who owns the window ids CGS reports. One call, no AX traffic.
+    static func liveWindowOwners() -> [CGWindowID: pid_t] {
+        guard let infoList = CGWindowListCopyWindowInfo([], kCGNullWindowID) as? [[String: Any]] else {
+            return [:]
+        }
+        var result: [CGWindowID: pid_t] = [:]
+        for info in infoList {
+            guard let id = info[kCGWindowNumber as String] as? CGWindowID,
+                  let pid = info[kCGWindowOwnerPID as String] as? pid_t
+            else { continue }
+            result[id] = pid
+        }
+        return result
     }
 
     /// Every real window AX is willing to report right now, across all apps.
@@ -98,17 +146,33 @@ enum WindowEnumerator {
         let app = NSRunningApplication(processIdentifier: window.pid)
         if app?.isHidden == true { app?.unhide() }
 
+        guard let element = window.element else {
+            // A placeholder: the WindowServer says this app has a window on that
+            // Space, but AX has never been able to describe it. Activating the
+            // app lands on it, and the refresh that follows the activation
+            // notification learns that Space for real, so the next cycle can
+            // aim at individual windows.
+            Diagnostics.note("focus placeholder \(window.appName)")
+            app?.activate()
+            WindowRegistry.shared.promote(window.id)
+            return
+        }
+
         var minimized: CFTypeRef?
-        if AXUIElementCopyAttributeValue(window.element, kAXMinimizedAttribute as CFString, &minimized) == .success,
+        if AXUIElementCopyAttributeValue(element, kAXMinimizedAttribute as CFString, &minimized) == .success,
            (minimized as? Bool) == true {
-            AXUIElementSetAttributeValue(window.element, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
+            AXUIElementSetAttributeValue(element, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
         }
 
         // Mark it main *before* activating, so the app comes forward on this
         // window instead of flashing whatever its previous main window was.
-        AXUIElementSetAttributeValue(window.element, kAXMainAttribute as CFString, kCFBooleanTrue)
-        AXUIElementPerformAction(window.element, kAXRaiseAction as CFString)
+        AXUIElementSetAttributeValue(element, kAXMainAttribute as CFString, kCFBooleanTrue)
+        AXUIElementPerformAction(element, kAXRaiseAction as CFString)
         app?.activate()
+
+        // Now the most recently used window, wherever it lives. Half of what
+        // makes the next cycle able to come back here.
+        WindowRegistry.shared.promote(window.id)
     }
 
     // MARK: - CGWindowList
@@ -203,6 +267,25 @@ enum WindowEnumerator {
             ))
         }
         return refs
+    }
+
+    /// The CGWindowID of a process's focused window, or nil if AX will not say.
+    /// Used to stamp switches made outside CmdTab.
+    static func focusedWindowID(pid: pid_t) -> CGWindowID? {
+        let app = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(app, 0.1)
+
+        // AX hands back an untyped CFTypeRef, and a misbehaving app can put
+        // anything in an attribute, so check before trusting it.
+        var raw: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute as CFString, &raw) == .success,
+              let value = raw, CFGetTypeID(value) == AXUIElementGetTypeID()
+        else { return nil }
+        let element = value as! AXUIElement
+
+        var id: CGWindowID = 0
+        guard _AXUIElementGetWindow(element, &id) == .success, id != 0 else { return nil }
+        return id
     }
 
     /// Diagnostics only: what AX says about one process, with error codes.

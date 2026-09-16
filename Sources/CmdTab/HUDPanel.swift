@@ -212,14 +212,16 @@ private final class HUDView: NSView {
     }
 }
 
+@MainActor
 final class HUDPanel {
     private var panel: NSPanel?
     private let view = HUDView()
 
-    static let keyHint = "↑↓ move · → all Spaces · release ⌘ to switch · esc cancel"
+    static let keyHint = "↑↓ move · → this Space · release ⌘ to switch · esc cancel"
 
-    /// Rows on screen, so PgUp/PgDn can move by exactly one screenful.
-    var pageSize: Int { max(1, view.visibleRows) }
+    /// How many rows the panel can fit on the active screen, whether or not it
+    /// is on screen right now. `Switcher` pages by this.
+    var rowCapacity: Int { maxRows(on: activeScreen()) }
 
     func show(_ windows: [WindowRef], selected: Int, scope: String) {
         let screen = activeScreen()

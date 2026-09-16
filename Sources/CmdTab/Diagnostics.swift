@@ -1,5 +1,6 @@
 import AppKit
 
+@MainActor
 enum Diagnostics {
     /// Rolling log of switcher activity, so a misfire can be read back after
     /// the fact instead of reproduced on demand.
@@ -17,6 +18,9 @@ enum Diagnostics {
     /// Draw the HUD offscreen with synthetic content that exercises the layout:
     /// more rows than fit, long titles, Space badges, varied app counts.
     static func renderHUD(to path: String) {
+        // Resolve the accent colour and appearance the panel draws with. Both
+        // want an initialized app, and this path runs before `NSApp.run`.
+        _ = NSApplication.shared
         let placeholder = AXUIElementCreateApplication(ProcessInfo.processInfo.processIdentifier)
         let samples: [(String, String, String?)] = [
             ("Ghostty", "cmd-tab@pokhara.local: ✳ Claude Code", "Desktop 2"),
@@ -50,19 +54,27 @@ enum Diagnostics {
         var out = "AXIsProcessTrusted: \(AXIsProcessTrusted())\n"
 
         var clock = Date()
-        let current = WindowEnumerator.currentSpaceWindowsMRU()
-        out += String(format: "\n== Cmd+Tab scope (%d) — %.0f ms ==\n",
+        let current = WindowEnumerator.windows(.currentSpace)
+        out += String(format: "\n== this-Space scope (%d) — %.0f ms ==\n",
                       current.count, Date().timeIntervalSince(clock) * 1000)
         for window in current {
             out += "  \(window.appName) | \(window.title)\n"
         }
 
+        // The default Cmd+Tab scope. `stamp=-` is a window never seen in use,
+        // which is why it sorts below the stamped ones. Read this list top-down
+        // to see why the switcher offered what it offered.
         clock = Date()
-        let all = WindowEnumerator.allSpacesWindowsMRU()
-        out += String(format: "\n== Esc scope (%d) — %.0f ms ==\n",
+        let all = WindowEnumerator.windows(.allSpaces)
+        out += String(format: "\n== all-Spaces scope (%d) — %.0f ms ==\n",
                       all.count, Date().timeIntervalSince(clock) * 1000)
         for window in all {
-            out += "  [\(window.spaceLabel ?? "-")] \(window.appName) | \(window.title)\n"
+            let stamp = WindowRegistry.shared.stamp(of: window.id).map(String.init) ?? "-"
+            // A placeholder stands for "this app has a window on that Space",
+            // which is all the WindowServer will say about a Space we have not
+            // visited. It resolves to real windows once you switch to it.
+            let kind = window.element == nil ? "placeholder" : "window"
+            out += "  stamp=\(stamp) \(kind) [\(window.spaceLabel ?? "-")] \(window.appName) | \(window.title)\n"
         }
 
         out += "\n== recent switcher events ==\n"
@@ -78,6 +90,11 @@ enum Diagnostics {
             axByPID[window.pid, default: 0] += 1
         }
 
+        var widenedByPID: [pid_t: Int] = [:]
+        for window in all {
+            widenedByPID[window.pid, default: 0] += 1
+        }
+
         out += "\n== apps ==\n"
         for app in NSWorkspace.shared.runningApplications
         where app.activationPolicy == .regular && app.processIdentifier != ProcessInfo.processInfo.processIdentifier {
@@ -85,7 +102,7 @@ enum Diagnostics {
             out += "  \(app.localizedName ?? "?") pid=\(pid) hidden=\(app.isHidden)"
             out += " cgOnScreen=\(onScreenByPID[pid] ?? 0)"
             out += " ax=\(axByPID[pid] ?? 0)"
-            out += " inEscScope=\(all.filter { $0.pid == pid }.count)\n"
+            out += " inWidenedScope=\(widenedByPID[pid] ?? 0)\n"
         }
         return out
     }
