@@ -2,22 +2,57 @@
 
 MRU window switcher for macOS. Two shortcuts, no thumbnails.
 
-| Shortcut  | Cycles                                              | Forward | Backward |
-|-----------|-----------------------------------------------------|---------|----------|
-| `Cmd+Tab` | All windows on the current Space, across all screens | `Tab`   | `` ` ``  |
-| ``Cmd+` `` | Windows of the frontmost app only                   | `` ` `` | `Tab`    |
+| Shortcut   | Cycles                                               | Forward | Backward |
+|------------|------------------------------------------------------|---------|----------|
+| `Cmd+Tab`  | All windows on the current Space, across all screens  | `Tab`   | `` ` ``  |
+| ``Cmd+` `` | Windows of the frontmost app only                     | `` ` `` | `Tab`    |
 
-Hold `Cmd`, press the cycle key as many times as you like, release `Cmd` to switch.
-A small text HUD shows app icon + window title. Nothing is raised until you let
-go of `Cmd`, so there is no flicker.
+### How it behaves
 
-While still holding `Cmd`:
+Hold `Cmd`, press the cycle key as many times as you like, release `Cmd` to
+switch. Nothing is raised until you release, so cycling never flickers.
 
-- **`Esc`** widens the list to **every Space**, including minimized windows, each
-  row tagged with its Space (`Desktop 2`, `Full Screen`). Press `Esc` again to
-  narrow back. The current Space's windows stay at the head of the widened list,
-  so the highlight never jumps. Picking a window on another Space switches to it.
-- **`.`** (i.e. `Cmd+.`) cancels without switching.
+The list is only a hint. Release within **250 ms** and it never appears: a
+quick `Cmd+Tab` switches with nothing drawn on screen. Hold longer and it fades
+in so you can see where you are. Either way, releasing `Cmd` switches to the
+highlighted window and dismisses it.
+
+That threshold has to clear a deliberate tap, which runs 120-200 ms. AltTab uses
+200 ms. The extra margin here is free, since the list changes nothing about what
+releasing `Cmd` does. It is `revealDelay` in `Switcher.swift`.
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│   Ghostty  cmd-tab@pokhara.local: ✳ Claude Code    Desktop 2 ▏ │
+│ ▸ Google Chrome  v8/src/codegen/arm64/assembl…     Desktop 1 ▏ │
+│   Slack  #general                                  Desktop 1 ▏ │
+│   Obsidian  Daily note                             Desktop 1   │
+├────────────────────────────────────────────────────────────────┤
+│ 3/10 windows · 10 apps  ·  All Spaces  ·  ↑↓ move · → all Spa… │
+└────────────────────────────────────────────────────────────────┘
+```
+
+While `Cmd` is down:
+
+| Key                  | Does                                              |
+|----------------------|---------------------------------------------------|
+| `Tab` / `` ` ``      | Move in the direction the shortcut opened with    |
+| `↑` `↓`              | Move one row (wraps)                              |
+| `PgUp` `PgDn`        | Move one screenful (stops at the ends)            |
+| `→`                  | Toggle between this Space and **all** Spaces      |
+| `Return`             | Switch now, without waiting for the key release   |
+| `Esc`                | Dismiss without switching                         |
+
+The footer counts windows and apps, and a scroll bar appears once the list is
+longer than fits.
+
+The panel is light-on-dark in both system appearances, over a black scrim at
+68% behind the blur. Without the scrim a bright page underneath bleeds through
+far enough to wash the text out. Worst case, white text lands at 4:1 against
+its own background. The scrim puts a floor under that: 7.9:1 for titles, 5.0:1
+for window names, 3.9:1 for the Space badges, assuming the blur contributes
+nothing at all. Highlight text picks white or black from the accent colour's
+luminance, since the accent can be anything from navy to yellow.
 
 ## Build & install
 
@@ -99,10 +134,18 @@ long-running daemon rather than a thing that enumerates on keypress.
 
 ### Diagnostics
 
-Menu bar → **Write Diagnostics**, or automatically on every Space change:
+Menu bar → **Write Diagnostics** appends to:
 
 ```
 ~/Library/Logs/CmdTab/trace.log
+```
+
+To also capture one automatically on every Space change, the only way to see
+what the registry learns and when, create the marker file. It costs a full
+Accessibility walk per Space switch, so it is off by default:
+
+```sh
+touch ~/Library/Logs/CmdTab/enable-trace
 ```
 
 Each entry records both switcher scopes with timings, and every app's window

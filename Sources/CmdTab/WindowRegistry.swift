@@ -18,6 +18,7 @@ final class WindowRegistry {
     static let shared = WindowRegistry()
 
     private var known: [CGWindowID: WindowRef] = [:]
+    private var pendingRefresh: Timer?
 
     func start() {
         let center = NSWorkspace.shared.notificationCenter
@@ -27,10 +28,23 @@ final class WindowRegistry {
                      NSWorkspace.didUnhideApplicationNotification,
                      NSWorkspace.didTerminateApplicationNotification] {
             center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                self?.refresh()
+                self?.scheduleRefresh()
             }
         }
         refresh()
+    }
+
+    /// Activating a window fires an activation notification, and a refresh walks
+    /// every app over the Accessibility API. Doing that inline would block the
+    /// main thread (and so the event tap) right when someone is switching
+    /// windows in a hurry. Coalesce instead.
+    private func scheduleRefresh() {
+        pendingRefresh?.invalidate()
+        let timer = Timer(timeInterval: 0.4, repeats: false) { [weak self] _ in
+            self?.refresh()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        pendingRefresh = timer
     }
 
     /// Forget dead windows, then learn whatever AX is willing to show right now.

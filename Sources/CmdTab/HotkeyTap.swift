@@ -64,10 +64,20 @@ final class HotkeyTap {
         if switcher.isCycling {
             if type == .keyDown {
                 switch key {
-                case kVK_Escape:
-                    switcher.toggleAllSpaces()
-                case kVK_ANSI_Period:
+                case kVK_Escape, kVK_ANSI_Period:
                     switcher.cancel()
+                case kVK_Return, kVK_ANSI_KeypadEnter:
+                    switcher.commit()
+                case kVK_RightArrow:
+                    switcher.toggleAllSpaces()
+                case kVK_DownArrow:
+                    switcher.step(1)
+                case kVK_UpArrow:
+                    switcher.step(-1)
+                case kVK_PageDown:
+                    switcher.step(switcher.pageSize, wrap: false)
+                case kVK_PageUp:
+                    switcher.step(-switcher.pageSize, wrap: false)
                 case kVK_Tab:
                     switcher.step(tabDirection)
                 case kVK_ANSI_Grave:

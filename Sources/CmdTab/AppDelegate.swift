@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main
         ) { _ in
+            guard Diagnostics.autoTraceEnabled else { return }
             Diagnostics.trace("activeSpaceDidChange")
         }
 
