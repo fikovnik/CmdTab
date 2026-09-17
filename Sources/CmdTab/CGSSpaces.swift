@@ -23,8 +23,8 @@ private func CGSCopySpacesForWindows(_ cid: CGSConnectionID,
 /// None of this has a public API. These are the same CGS SPIs every macOS
 /// window switcher relies on, and they have been stable since Spaces shipped.
 ///
-/// The windows themselves come from `WindowServer`, which needs the Space ids
-/// this class puts in order.
+/// The windows themselves come from `WindowServer`, which needs the ordered
+/// Space ids this class produces.
 @MainActor
 final class SpaceMap {
     private let connection = CGSMainConnectionID()
@@ -89,10 +89,9 @@ final class SpaceMap {
     /// Every Space, left to right.
     var orderedSpaces: [CGSSpaceID] { ordered }
 
-    /// Record which Space a window was found on, from a scan that already knows.
-    /// Saves a `CGSCopySpacesForWindows` round trip per window, and is the only
-    /// thing that keeps the map current for a window that has been dragged to
-    /// another Space since it was first seen.
+    /// Record which Space a window was found on, from a scan that already
+    /// knows. Saves a `CGSCopySpacesForWindows` round trip per window, and
+    /// keeps the map current for a window dragged to another Space.
     func note(window: CGWindowID, onSpace space: CGSSpaceID) {
         cache[window] = space
     }

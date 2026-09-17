@@ -86,10 +86,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                       inFileViewerRootedAtPath: Diagnostics.traceURL.deletingLastPathComponent().path)
     }
 
-    /// Screen Recording buys two things: thumbnails, and `kCGWindowName`, the
-    /// only source of a title for a window on a Space AX cannot describe. The
-    /// grant only takes effect on relaunch, because macOS caches the decision
-    /// per process, so this is a menu item rather than something done at launch.
+    /// Screen Recording buys thumbnails and `kCGWindowName`, the only source of
+    /// a title for an off-Space window. macOS caches the decision per process,
+    /// so the grant only takes effect on relaunch, hence a menu item rather
+    /// than something done at launch.
     @objc private func enableScreenRecording() {
         WindowPreview.requestPermission()
     }

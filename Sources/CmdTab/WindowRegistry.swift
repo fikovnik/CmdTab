@@ -2,20 +2,14 @@ import AppKit
 
 /// Every window AX has ever described, plus the state that orders them.
 ///
-/// `kAXWindowsAttribute` only reports an app's windows on the *current* Space,
-/// plus its minimized ones. Windows on another Space are invisible to it,
-/// sitting on Desktop 3, AX answers `count=0, status=success` for every app
-/// whose windows are on Desktop 1, and neither a 5 s messaging timeout nor
-/// `AXManualAccessibility` changes that.
+/// `kAXWindowsAttribute` only reports an app's windows on the current Space,
+/// plus its minimized ones. Off-Space windows come from `WindowServer` instead.
+/// What this cache adds is the `AXUIElement` and the live title, learned
+/// whenever macOS hands them over: every Space change, app activation, and
+/// launch. Entries are dropped once the WindowServer stops listing the window.
 ///
-/// So AX is not enough on its own. The windows on Spaces we are not standing on
-/// come from `WindowServer` instead, which can see all of them. What this cache
-/// adds is the `AXUIElement` and the live title, learned whenever macOS is
-/// willing to hand them over: every Space change, app activation, and launch.
-/// Entries are dropped once the WindowServer stops listing the window at all.
-///
-/// The registry also keeps the use stamps that order the list, and the Space
-/// map that labels it, so all per-window state lives in one place.
+/// Also holds the use stamps that order the list and the Space map that labels
+/// it, so all per-window state lives in one place.
 @MainActor
 final class WindowRegistry {
     static let shared = WindowRegistry()
@@ -121,6 +115,7 @@ final class WindowRegistry {
         for window in windows { known[window.id] = window }
     }
 
+
     /// Forget windows the WindowServer no longer lists.
     func evictClosed(live: Set<CGWindowID>) {
         known = known.filter { live.contains($0.key) }
@@ -128,13 +123,12 @@ final class WindowRegistry {
     }
 
     /// One row per real window the WindowServer reports, minus the ids AX has
-    /// already described. These are the windows on the Spaces you are not on.
+    /// already described, i.e. the off-Space windows.
     ///
-    /// They carry no `AXUIElement`, since nothing can produce one for an off-Space
-    /// window, so `WindowEnumerator.focus` routes them through the WindowServer
-    /// instead. Titles come from `CGWindowList`, which needs Screen Recording, and
-    /// without it a row is app name plus Space label, and gains its title on the
-    /// refresh that follows the first visit to that Space.
+    /// They carry no `AXUIElement`, so `WindowEnumerator.focus` routes them
+    /// through the WindowServer. Titles come from `CGWindowList`, which needs
+    /// Screen Recording. Without it a row is app name plus Space label until
+    /// the first visit to that Space.
     func serverWindows(besides described: Set<CGWindowID>) -> [WindowRef] {
         var apps: [pid_t: NSRunningApplication] = [:]
         for app in NSWorkspace.shared.runningApplications where app.activationPolicy == .regular {
@@ -146,8 +140,8 @@ final class WindowRegistry {
         var result: [WindowRef] = []
         for space in spaces.orderedSpaces {
             for window in WindowServer.windows(onSpace: space, titles: titles) {
-                // Noted for every window found, described or not: this scan is
-                // the cheapest and freshest answer to "which Space is it on".
+                // Noted whether described or not: this scan is the cheapest
+                // and freshest answer to which Space a window is on.
                 spaces.note(window: window.id, onSpace: space)
                 guard !described.contains(window.id), let app = apps[window.pid] else { continue }
                 result.append(WindowRef(id: window.id,
@@ -164,11 +158,16 @@ final class WindowRegistry {
 
     /// Forget dead windows, then learn whatever AX is willing to show right now.
     /// Walks every app, so it stays on the notification path, never on a keypress.
+    ///
+    /// Also the only useful moment to fill the preview cache: the windows on
+    /// the active Space now are the ones that become un-capturable once we
+    /// leave it.
     func refresh() {
         evictClosed(live: Set(WindowEnumerator.liveWindowOwners().keys))
         for window in WindowEnumerator.axWindowsOfAllApps() {
             known[window.id] = window
         }
+        WindowPreview.shared.warm()
     }
 
     /// Activating a window fires an activation notification, and a refresh walks

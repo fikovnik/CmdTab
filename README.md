@@ -70,12 +70,12 @@ Grant **System Settings → Privacy & Security → Accessibility → CmdTab**.
 The app polls once a second, so it starts working as soon as you flip the toggle,
 no relaunch needed.
 
-Thumbnails, and titles for windows on Spaces you are not on, additionally need
-**Screen Recording**. Menu bar → **Enable Titles & Previews…** asks for it.
-Unlike Accessibility, macOS caches that decision per process, so CmdTab has to
-be relaunched after granting it. Without the grant the switcher still lists
-every window on every Space, and those rows just carry the app name and Space
-label instead of a title, until you visit that Space once.
+Thumbnails and off-Space titles additionally need **Screen Recording**. Menu
+bar → **Enable Titles & Previews…** asks for it. Unlike Accessibility, macOS
+caches that decision per process, so CmdTab has to be relaunched after granting
+it. Without the grant the switcher still lists every window on every Space. The
+off-Space rows carry app name and Space label instead of a title, until you
+visit that Space once.
 
 Other targets: `make run` (run from `build/`), `make stop`, `make uninstall`, `make clean`.
 
@@ -126,37 +126,45 @@ make reset-permissions && make install
   (`org.gnome.shell.app-switcher current-workspace-only` defaults to `false`).
 - **Window titles**: over the Accessibility API wherever AX can see the window,
   correlated to its CGWindowID by `_AXUIElementGetWindow`, a private-but-stable
-  SPI (`PrivateAX.swift`). AX cannot see another Space, so off-Space titles fall
-  back to `kCGWindowName`, which is gated behind Screen Recording. Without the
-  grant a full scan names 3 windows out of 296.
-- **Previews**: `SCScreenshotManager.captureImage` against a single-window
-  `SCContentFilter`, at twice the on-screen size so the panel stays sharp on
-  Retina (`WindowPreview.swift`). Not `CGWindowListCreateImage`: deprecated
-  since macOS 14, and Sequoia nags weekly about anything still using it. Frames
-  are cached (the last five, since each runs to megabytes) so going back and
-  forth is instant, and a frame older than 2 s is shown at once and refreshed
-  behind itself. One capture runs at a time: stepping with no dwell can ask
-  faster than a screenshot completes, so requests replace each other instead of
-  piling up.
+  SPI (`PrivateAX.swift`). AX cannot see another Space, so off-Space titles come
+  from `kCGWindowName`, gated behind Screen Recording. Without the grant a full
+  scan names 3 windows out of 296.
+- **Previews**: `SLSHWCaptureWindowList`, the WindowServer's frame store
+  (`WindowPreview.swift`). Not `SCScreenshotManager`: that needs an
+  `SCShareableContent` enumeration of all 299 windows before it can filter to
+  one, and returns nothing for some windows, Lightroom's included, which this
+  captures fine. 3-18 ms per window and synchronous, so there is no request
+  coalescing. Frames arrive at the window's size in points and are resampled to
+  twice the panel's ceiling: 2 MB of cache per 2560pt window instead of 14 MB.
+- **Warming the preview cache**: an app that releases its drawing surface while
+  a window is occluded cannot be captured from another Space by any API. One
+  Chrome window measured 36 distinct colours on its own Space and 6 from one
+  Space over: a toolbar above flat grey. Slack, on that same unvisited Space,
+  captured at 79. It keeps its surface. So every window on the active Space is
+  captured off the coalesced registry refresh, one per 80 ms to keep the main
+  thread free, and those frames survive leaving the Space. A frame taken on a
+  window's own Space is never replaced by one taken from elsewhere.
 - **Filtering**: for AX windows, subrole `AXStandardWindow` or `AXDialog` plus
   a non-zero CGWindowID. For WindowServer windows, the flags in `WindowServer.isReal`.
 - **Spaces**: `CGSCopyManagedDisplaySpaces` for the layout and labels
   (`CGSSpaces.swift`). Membership comes from the per-Space scan itself,
   `CGSCopySpacesForWindows` is the fallback for a window that scan missed.
-- **Off-Space windows**: `SLSWindowQueryWindows` and the window iterator behind
-  it (`WindowServer.swift`). This is the only thing that can see a Space you are
-  not on. Its raw output is noisy, so four flags from the iterator do the
-  filtering: `attributes & 0x2` (drops Chrome's one compositing surface per
-  window, twenty of them, all with `attributes = 0`), a zero parent id (drops
-  Lightroom's eleven attached panels, leaving its one real window), level 0
-  (drops the menu bar at 24, Control Center at 25, this app's HUD at 101), and
-  non-zero alpha. Checked against AX as ground truth on the current Space, the
-  filter reproduces its list exactly: 8 of 29 raw ids on one Space, 28 of 59 on
-  the other.
-- **Focusing off-Space**: those rows have no `AXUIElement`, so
-  `_SLPSSetFrontProcessWithOptions` takes the window id directly and switches
-  Space to reach it, followed by the two synthetic event records that tell the
-  app itself which window was activated (`WindowServer.raise`).
+- **Off-Space windows**: `SLSWindowQueryWindows` and its window iterator
+  (`WindowServer.swift`), the only source that sees a Space you are not on. Its
+  raw output is noisy, so four iterator flags filter it: `attributes & 0x2`
+  (drops Chrome's one compositing surface per window, 20 of them, all with
+  `attributes = 0`), zero parent id (drops Lightroom's 11 attached panels,
+  leaving its one real window), level 0 (drops the menu bar at 24, Control
+  Center at 25, this app's HUD at 101), and non-zero alpha. Against AX as ground
+  truth on the active Space the filter matches exactly: 8 of 29 raw ids on one
+  Space, 28 of 59 on the other.
+- **Focusing off-Space**: those rows have no `AXUIElement`. Two calls, in order
+  (`WindowServer.raise`): `NSRunningApplication.activate()` switches Space but
+  lands on whichever window the app last had main, then
+  `_SLPSSetFrontProcessWithOptions` names the right window by id. It does *not*
+  switch Space itself, and calling it first makes the app frontmost, which turns
+  the activation into a no-op and leaves you on the wrong Space. Two synthetic
+  event records follow, telling the app which window was activated.
 
 ### Why AX is not enough
 
@@ -170,17 +178,17 @@ Slack    id=114  2560x1410  alpha=1.00  in CGWindowList  →  AX: status=success
 Chrome   20 real windows               in CGWindowList  →  AX: status=success count=0
 ```
 
-`status=success count=0`, not an error, so there is nothing to retry. Raising
-the AX messaging timeout from 100 ms to 5 s changes nothing, and neither does
+`status=success count=0`, not an error, so there is nothing to retry. Raising the
+AX messaging timeout from 100 ms to 5 s changes nothing, and neither does
 `AXManualAccessibility` or `AXEnhancedUserInterface`, the attributes that make
 Chromium and Adobe toolkits build an AX tree.
 
-So the all-Spaces list comes from the WindowServer instead (`WindowServer.swift`),
-which can see every Space. `WindowRegistry` still exists, for what the
-WindowServer will not say: it learns the `AXUIElement` and the live title
-whenever macOS is willing to hand them over: every Space change, app
-activation, launch, unhide, and holds the use stamps that order the list.
-Entries are evicted once the WindowServer stops listing the window at all.
+So the all-Spaces list comes from the WindowServer (`WindowServer.swift`).
+`WindowRegistry` still exists for what the WindowServer will not say: it learns
+the `AXUIElement` and the live title whenever macOS hands them over: every
+Space change, app activation, launch, unhide, and holds the use stamps that
+order the list. Entries are evicted once the WindowServer stops listing the
+window.
 
 ### Diagnostics
 
@@ -211,31 +219,37 @@ registry learns and when.
 
 ## Known limitations
 
-- **Previews of windows you have not visited**: a thumbnail comes from the
-  WindowServer's frame for that window, and there is no guarantee one exists for
-  a window sitting on a Space you have not been to since launch. Those rows show
-  no preview until you have seen them once. After that the cached frame stands
-  in, stale but recognisable. Minimized windows are the same story.
-- **Previews need macOS 14**: `SCScreenshotManager` arrived in Sonoma. On
-  Ventura the switcher runs as before, with no thumbnails.
+- **Previews of never-visible windows**: warming covers a window on a Space you
+  visited, but not one that has been covered by another window the whole time.
+  Chrome releases the drawing surface for those too: on one Space, 6 of 20
+  Chrome windows sat at 5 distinct colours against 15-50 for the 14 that had
+  been visible. Chrome's `chrome://flags/#disable-backgrounding-occluded-windows`
+  turns the behaviour off, at the cost of rendering windows you cannot see.
+  `--report` prints a colour count per cached frame, which is the only way to
+  tell an empty preview from a dark one.
+- **Previews on a Space never visited**: never warmed, so its windows preview
+  from whatever the WindowServer still holds, which for some apps is nothing.
 - **Secure Input**: while a password field has focus, macOS blocks all event
   taps. Shortcuts are inert until you leave the field. Nothing to do about it.
 - **Hung apps**: AX messaging timeout is 100 ms per app, so a beachballing app
   can add up to that much latency to opening the switcher.
 - **Titles on unvisited Spaces**: every window on every Space is listed from
-  launch, but `kAXWindowsAttribute` describes a Space only while you are standing
-  on it. Without Screen Recording those rows carry the app name and Space label
-  and no title, until the refresh that follows your first visit to that Space.
-  With Screen Recording granted, `kCGWindowName` fills them in immediately.
+  launch, but `kAXWindowsAttribute` describes a Space only while you are on it.
+  Without Screen Recording those rows carry app name and Space label and no
+  title until your first visit to that Space. With it, `kCGWindowName` fills
+  them in immediately.
 - **Stale titles off-Space**: a remembered window keeps the title it had when
   last seen, refreshed next time you visit its Space.
 - **Full-screen apps**: a full-screen window is its own Space, so pressing `→`
   there narrows the list to that one window. Without it you see everything, as
   everywhere else.
 - **Cost of the all-Spaces default**: a keypress pays for a live `CGWindowList`
-  scan of the current Space, one WindowServer query per Space, and a dictionary
-  read: measured at 25 ms for 36 windows across three Spaces, against 46 ms for
-  the narrowed scope, which is AX-bound instead. The full Accessibility walk
+  scan of the active Space, an Accessibility resolve of it, one WindowServer
+  query per Space, and a dictionary read. The Accessibility resolve dominates,
+  and both scopes pay it: on a Space holding 28 windows (20 of them Chrome's)
+  `--report` measures 166-203 ms for the narrowed scope, then 23-77 ms for the
+  widened one, which reuses the AX connections the first just warmed. On a Space
+  holding 8 windows the first figure is 36-46 ms. The full Accessibility walk
   that populates the registry is *not* on that path. It runs coalesced off
   app-activation and Space-change notifications. Everything the switcher does
   runs off the event-tap callback, so a slow app cannot get the tap disabled.

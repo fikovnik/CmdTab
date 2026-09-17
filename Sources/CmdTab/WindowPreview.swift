@@ -1,5 +1,4 @@
 import AppKit
-import ScreenCaptureKit
 
 private let gap: CGFloat = 12
 private let inset: CGFloat = 6
@@ -13,13 +12,22 @@ private let maxSize = NSSize(width: 900, height: 700)
 /// window squeezed into 90pt of height shows nothing.
 private let minWidth: CGFloat = 180
 private let minHeight: CGFloat = 130
-/// A cached capture older than this is still shown at once (a stale frame
-/// beats a blank one) and refreshed behind it.
+/// A cached frame of a window on the active Space is re-captured once older
+/// than this. Off-Space windows are never re-captured. See `warm`.
 private let staleAfter: TimeInterval = 2
-/// A cached frame is captured at twice `maxSize`, so up to ten megabytes of
-/// bitmap each, and a session can hold thirty windows. Keep only enough to make
-/// going back and forth feel instant.
-private let cacheLimit = 5
+/// How long a warmed frame is trusted before the next refresh replaces it.
+private let warmAfter: TimeInterval = 15
+/// Has to hold every window on a busy Space (28 on one here) plus the Spaces
+/// already left. Each frame is a couple of megabytes at the sizes `capture`
+/// resamples to.
+private let cacheLimit = 48
+/// One warm capture per tick. A capture is 3-18 ms on the main thread, so 28 of
+/// them back to back would be half a second of stutter.
+private let warmInterval: TimeInterval = 0.08
+/// Let a Space settle before warming it. A Space change coalesces into a
+/// refresh faster than the animation finishes, and a window captured mid-slide
+/// comes back cropped: a 2560pt Slack window arrived 296pt wide.
+private let warmLeadIn: TimeInterval = 0.7
 
 /// The thumbnail that appears beside the switcher list once the selection has
 /// settled.
@@ -28,11 +36,19 @@ private let cacheLimit = 5
 /// other thing this app reads, so the preview is the one feature that can be
 /// missing on a working install. It fails quiet: no permission, no capture, no
 /// panel, and the switcher behaves exactly as it did before.
+///
+/// Shared rather than owned by the switcher: the cache is filled while windows
+/// are on the active Space, which is not when the switcher runs. See `warm`.
 @MainActor
 final class WindowPreview {
+    static let shared = WindowPreview()
+
     private struct Shot {
         let image: NSImage
         let taken: Date
+        /// Whether the window was on the active Space when this was taken.
+        /// Such a frame is never replaced by one taken from another Space.
+        let live: Bool
     }
 
     private var panel: NSPanel?
@@ -41,55 +57,121 @@ final class WindowPreview {
     /// window that has since moved to another Space still shows the last frame
     /// we managed to get of it.
     private var cache: [CGWindowID: Shot] = [:]
-    /// A capture that has been asked for but not started yet. Once the preview
-    /// is up it follows the selection with no dwell, so stepping fast can ask
-    /// for a capture every few milliseconds, far faster than one takes. Only
-    /// the newest is worth running, so requests replace each other here rather
-    /// than piling up as concurrent captures.
-    private struct Request {
-        let id: CGWindowID
-        let anchor: NSRect
-        let screen: NSScreen
-        let generation: Int
-    }
-
-    private var pending: Request?
-    private var capturing = false
-    /// Bumped on every show and hide, so a capture that lands after the
-    /// selection moved on can tell that it is no longer wanted.
-    private var generation = 0
+    /// `nil` until the first tick fills it, so the window list is read after
+    /// the Space has settled rather than when the refresh asked.
+    private var warmQueue: [CGWindowID]?
+    private var warmTimer: Timer?
     /// The permission prompt is a system dialog, so ask at most once per launch.
     private var askedForPermission = false
 
     /// Show the preview for `window`, anchored beside the switcher panel.
-    /// Returns immediately. The panel appears when the capture lands, which for
-    /// a cached window is the same turn.
     func show(_ window: WindowRef, anchor: NSRect, on screen: NSScreen) {
-        generation += 1
+        let live = WindowServer.isOnActiveSpace(window.id)
 
         if let shot = cache[window.id] {
             display(shot.image, anchor: anchor, on: screen)
-            guard Date().timeIntervalSince(shot.taken) > staleAfter else {
-                pending = nil
-                return
-            }
+            // Off-Space with a frame already cached: a new capture cannot
+            // improve on it. Either the cached frame was taken on the window's
+            // own Space, or it is the same empty frame a new one would return.
+            guard live, Date().timeIntervalSince(shot.taken) > staleAfter else { return }
         }
 
-        pending = Request(id: window.id, anchor: anchor, screen: screen, generation: generation)
-        capture()
+        guard let image = capture(window.id, live: live) else { return }
+        remember(image, for: window.id, live: live)
+        display(image, anchor: anchor, on: screen)
+    }
+
+    /// Capture every window on the active Space, so leaving it leaves usable
+    /// frames behind. Driven by the coalesced registry refresh.
+    ///
+    /// An app that releases its drawing surface while occluded cannot be
+    /// captured from another Space by any API. One Chrome window measured 36
+    /// distinct colours on its own Space and 6 from one Space over: a toolbar
+    /// above flat grey. Slack, on that same unvisited Space, captured at 79.
+    func warm() {
+        guard CGPreflightScreenCaptureAccess(), warmTimer == nil else { return }
+
+        warmQueue = nil
+        // .common, so it fires while the event tap pumps its own run loop
+        // source.
+        let timer = Timer(timeInterval: warmInterval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.warmTick() }
+        }
+        timer.fireDate = Date().addingTimeInterval(warmLeadIn)
+        RunLoop.main.add(timer, forMode: .common)
+        warmTimer = timer
+    }
+
+    private func warmTick() {
+        // Up to 18 ms on the main thread, so not while the list is being
+        // stepped through.
+        guard !isShowing else { return }
+
+        if warmQueue == nil {
+            let now = Date()
+            warmQueue = WindowServer.windows(onSpace: WindowServer.activeSpace, titles: [:])
+                .map(\.id)
+                .filter { id in
+                    guard let shot = cache[id], shot.live else { return true }
+                    return now.timeIntervalSince(shot.taken) > warmAfter
+                }
+        }
+
+        guard let id = warmQueue?.popLast() else {
+            warmTimer?.invalidate()
+            warmTimer = nil
+            return
+        }
+        if let image = capture(id, live: true) {
+            remember(image, for: id, live: true)
+        }
     }
 
     var isShowing: Bool { panel?.isVisible == true }
 
+    /// Diagnostics: cache contents, and whether each frame was taken on the
+    /// window's own Space.
+    ///
+    /// `colours` is what distinguishes an empty frame from a good one. Size and
+    /// capture status are identical either way. A single-digit count on a large
+    /// window means the app had released its drawing surface.
+    func cacheReport() -> String {
+        let now = Date()
+        return cache.sorted { $0.key < $1.key }.map { id, shot in
+            String(format: "  id=%u %@ %.0fs %dx%d colours=%d\n",
+                   id, shot.live ? "live" : "off-Space", now.timeIntervalSince(shot.taken),
+                   Int(shot.image.size.width), Int(shot.image.size.height), colours(shot.image))
+        }.joined()
+    }
+
+    /// Distinct colours on a 20x20 grid over the frame.
+    private func colours(_ image: NSImage) -> Int {
+        guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
+              let data = cgImage.dataProvider?.data,
+              let bytes = CFDataGetBytePtr(data), cgImage.bytesPerRow > 0
+        else { return -1 }
+
+        let length = CFDataGetLength(data)
+        var seen = Set<UInt32>()
+        for row in 0..<20 {
+            for column in 0..<20 {
+                let offset = (cgImage.height * row / 20) * cgImage.bytesPerRow
+                    + (cgImage.width * column / 20) * 4
+                guard offset + 2 < length else { continue }
+                seen.insert(UInt32(bytes[offset]) << 16
+                            | UInt32(bytes[offset + 1]) << 8
+                            | UInt32(bytes[offset + 2]))
+            }
+        }
+        return seen.count
+    }
+
     func hide() {
-        generation += 1
-        pending = nil
         panel?.orderOut(nil)
     }
 
-    /// Prompt for Screen Recording, for the menu item. Titles for off-Space
-    /// windows ride on the same grant. The grant only takes
-    /// effect on relaunch, which is macOS's rule, not ours.
+    /// Prompt for Screen Recording, for the menu item. Off-Space titles ride on
+    /// the same grant. Takes effect on relaunch only, which is macOS's rule.
     static func requestPermission() {
         if !CGRequestScreenCaptureAccess() {
             NSWorkspace.shared.open(URL(string:
@@ -98,8 +180,8 @@ final class WindowPreview {
     }
 
     /// Keep the newest `cacheLimit` frames and drop the rest.
-    private func remember(_ image: NSImage, for id: CGWindowID) {
-        cache[id] = Shot(image: image, taken: Date())
+    private func remember(_ image: NSImage, for id: CGWindowID, live: Bool) {
+        cache[id] = Shot(image: image, taken: Date(), live: live)
         while cache.count > cacheLimit,
               let oldest = cache.min(by: { $0.value.taken < $1.value.taken })?.key {
             cache[oldest] = nil
@@ -108,32 +190,11 @@ final class WindowPreview {
 
     // MARK: - Capture
 
-    /// Run the pending request, if any, and then whatever replaced it while it
-    /// ran. Serial by construction: one screenshot at a time.
-    private func capture() {
-        guard !capturing, let request = pending, hasPermission() else { return }
-        pending = nil
-        capturing = true
-
-        Task { @MainActor [weak self] in
-            let image = await WindowPreview.capture(id: request.id)
-            guard let self else { return }
-            self.capturing = false
-            if let image {
-                self.remember(image, for: request.id)
-                if self.generation == request.generation {
-                    self.display(image, anchor: request.anchor, on: request.screen)
-                }
-            }
-            self.capture()
-        }
-    }
-
-    private func hasPermission() -> Bool {
+    /// `prompt` only for a capture someone is waiting on. The dialog makes the
+    /// feature discoverable, but must not come out of a background refresh.
+    private func hasPermission(prompt: Bool) -> Bool {
         if CGPreflightScreenCaptureAccess() { return true }
-        // Asking costs one dialog and makes the feature discoverable. Without it
-        // previews are invisible until someone finds the menu item.
-        if !askedForPermission {
+        if prompt, !askedForPermission {
             askedForPermission = true
             _ = CGRequestScreenCaptureAccess()
             Diagnostics.note("preview: no Screen Recording permission")
@@ -141,37 +202,45 @@ final class WindowPreview {
         return false
     }
 
-    /// One window's contents, at twice its on-screen size so the panel stays
-    /// sharp on Retina. `nil` if the window is gone, on a Space the
-    /// WindowServer has no frame for, or the permission was revoked.
-    private static func capture(id: CGWindowID) async -> NSImage? {
-        guard #available(macOS 14.0, *) else { return nil }
-        guard let image = await captureImage(id: id) else { return nil }
-        return NSImage(cgImage: image,
-                       size: NSSize(width: CGFloat(image.width) / 2,
-                                    height: CGFloat(image.height) / 2))
-    }
-
-    @available(macOS 14.0, *)
-    private static func captureImage(id: CGWindowID) async -> CGImage? {
-        // onScreenWindowsOnly: false, since the switcher spans every Space, so most
-        // of what it lists is not on screen at the moment it is previewed.
-        guard let content = try? await SCShareableContent.excludingDesktopWindows(
-                false, onScreenWindowsOnly: false),
-              let window = content.windows.first(where: { $0.windowID == id }),
-              window.frame.width > 0, window.frame.height > 0
+    /// One window's contents, sized for the panel. `nil` if the window is gone,
+    /// the WindowServer has no frame for it, or the permission was revoked.
+    ///
+    /// Frames arrive at the window's size in points. Anything wider than twice
+    /// `maxSize` is more pixels than the panel can use, so the excess is
+    /// resampled away rather than cached. Narrower windows are kept as they
+    /// arrive (there is no higher-resolution frame to ask for) and drawn at
+    /// their own size, which `place` will not exceed.
+    private func capture(_ id: CGWindowID, live: Bool) -> NSImage? {
+        guard hasPermission(prompt: live),
+              let expected = WindowServer.size(ofWindow: id),
+              let image = WindowServer.capture(window: id),
+              image.width > 0, image.height > 0
         else { return nil }
 
-        let width = min(window.frame.width, maxSize.width) * 2
-        let config = SCStreamConfiguration()
-        config.width = Int(width)
-        config.height = Int(width * window.frame.height / window.frame.width)
-        config.showsCursor = false
-        config.ignoreShadowsSingleWindow = true
-        config.captureResolution = .best
-        return try? await SCScreenshotManager.captureImage(
-            contentFilter: SCContentFilter(desktopIndependentWindow: window),
-            configuration: config)
+        // A frame smaller than the window was caught mid-Space animation,
+        // composited only as far as it had got. See `warmLeadIn`.
+        guard abs(CGFloat(image.width) - expected.width) <= 2,
+              abs(CGFloat(image.height) - expected.height) <= 2
+        else { return nil }
+
+        let points = NSSize(width: CGFloat(image.width), height: CGFloat(image.height))
+        let target = Int(min(points.width, maxSize.width) * 2)
+        let scaled = target < image.width ? downscale(image, toWidth: target) ?? image : image
+        return NSImage(cgImage: scaled, size: points)
+    }
+
+    /// Resample to `width`, keeping the aspect ratio. Takes a 2560pt window's
+    /// frame from 14 MB of bitmap to 2 MB.
+    private func downscale(_ image: CGImage, toWidth width: Int) -> CGImage? {
+        let height = max(1, image.height * width / image.width)
+        guard let space = image.colorSpace,
+              let context = CGContext(data: nil, width: width, height: height,
+                                      bitsPerComponent: 8, bytesPerRow: 0, space: space,
+                                      bitmapInfo: image.bitmapInfo.rawValue)
+        else { return nil }
+        context.interpolationQuality = .high
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return context.makeImage()
     }
 
     // MARK: - Placement

@@ -71,12 +71,15 @@ enum Diagnostics {
                       all.count, Date().timeIntervalSince(clock) * 1000)
         for window in all {
             let stamp = WindowRegistry.shared.stamp(of: window.id).map(String.init) ?? "-"
-            // "server" is a window only the WindowServer can see, because it is
-            // on a Space we are not standing on. It gains an AX element, and a
-            // title if Screen Recording is off, once you switch to that Space.
+            // "server" is a window only the WindowServer can see, i.e. one
+            // off-Space. Once you switch to that Space it gains an AX element,
+            // and a title too if Screen Recording is off.
             let kind = window.element == nil ? "server" : "ax"
-            out += "  stamp=\(stamp) \(kind) [\(window.spaceLabel ?? "-")] \(window.appName) | \(window.title)\n"
+            out += "  stamp=\(stamp) \(kind) id=\(window.id) [\(window.spaceLabel ?? "-")] \(window.appName) | \(window.title)\n"
         }
+
+        out += "\n== preview cache ==\n"
+        out += WindowPreview.shared.cacheReport()
 
         out += "\n== recent switcher events ==\n"
         for event in events { out += "  \(event)\n" }

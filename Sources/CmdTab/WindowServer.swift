@@ -1,31 +1,26 @@
 import AppKit
 
-/// The WindowServer's own view of the windows on every Space.
+/// Windows on every Space, from the WindowServer.
 ///
-/// This exists because `kAXWindowsAttribute` only ever describes the Space you
-/// are standing on, verified on a live session: sitting on Desktop 3, AX
-/// returns `count=0, status=success` for all nine apps whose windows are on
-/// Desktop 1, and neither a 5 s messaging timeout nor `AXManualAccessibility`
-/// changes that. So the all-Spaces list cannot come from AX.
+/// `kAXWindowsAttribute` only describes the active Space, so the all-Spaces
+/// list cannot come from AX. Measured from Desktop 3: AX returns
+/// `status=success count=0` for all nine apps whose windows are on Desktop 1,
+/// unchanged by a 5 s messaging timeout or `AXManualAccessibility`.
 ///
-/// `SLSWindowQueryWindows` can see every Space, but its raw output is noisy:
-/// Chrome contributes one compositing surface per window, Lightroom's panels
-/// come through as windows. The iterator also exposes the per-window flags that
-/// tell them apart. See `isReal`. Checked against AX as ground truth on the
-/// current Space, this filter reproduces its list exactly.
+/// `SLSWindowQueryWindows` sees every Space, but reports compositing surfaces
+/// and child panels as windows. `isReal` filters those out. On the active Space
+/// the filtered list matches AX exactly.
 ///
-/// Everything here is SkyLight SPI. It is the same set yabai uses, and
-/// it has been stable across releases, but it is private, so each call is
-/// written to degrade to "no windows" rather than to trap.
+/// SkyLight SPI throughout. Every call degrades to an empty result on failure.
 @MainActor
 enum WindowServer {
 
     struct Window {
         let id: CGWindowID
         let pid: pid_t
-        /// Set only when `CGWindowList` will say, i.e. with Screen Recording
-        /// granted. The WindowServer's own `kCGSWindowTitle` is empty for every
-        /// app window. Only its internal windows ("Menubar") carry one.
+        /// Only set with Screen Recording granted. The WindowServer's own
+        /// `kCGSWindowTitle` is empty for app windows. Only its internal ones
+        /// ("Menubar") carry it.
         let title: String?
     }
 
@@ -62,15 +57,15 @@ enum WindowServer {
         return raw as? [NSNumber] ?? []
     }
 
-    /// Whether the iterator is parked on something a person would call a window.
+    /// Whether the iterator is on a real window.
     ///
-    /// - `attributes & 0x2` is the test yabai uses, and it alone drops Chrome's
-    ///   twenty compositing surfaces, which carry `attributes = 0`.
-    /// - a non-zero parent is a panel attached to another window: Lightroom's
-    ///   toolbars and filmstrip, eleven rows that collapse to one without it.
-    /// - level 0 is the normal window layer. The menu bar sits at 24, Control
-    ///   Center at 25, this app's own HUD at 101.
-    /// - zero alpha is a window that is present but invisible.
+    /// - `attributes & 0x2`: drops Chrome's 20 compositing surfaces, which
+    ///   carry `attributes = 0`.
+    /// - zero parent: drops panels attached to another window, e.g. Lightroom's
+    ///   11 toolbars and filmstrip.
+    /// - level 0: the normal window layer. Menu bar is 24, Control Center 25,
+    ///   this app's HUD 101.
+    /// - non-zero alpha: present but invisible windows.
     private static func isReal(_ iterator: CFTypeRef) -> Bool {
         SLSWindowIteratorGetAttributes(iterator) & 0x2 != 0
             && SLSWindowIteratorGetParentID(iterator) == 0
@@ -78,11 +73,11 @@ enum WindowServer {
             && SLSWindowIteratorGetAlpha(iterator) > 0
     }
 
-    /// Window titles from `CGWindowList`, for every window on every Space.
+    /// Window titles from `CGWindowList`, for every Space.
     ///
-    /// Empty unless Screen Recording is granted, as `kCGWindowName` is gated on
-    /// it, and without the grant a full scan reports a name for three windows
-    /// out of three hundred. The switcher falls back to app name plus Space.
+    /// Empty without Screen Recording: `kCGWindowName` is gated on it, and a
+    /// full scan then names 3 windows out of 296. Callers fall back to app name
+    /// plus Space label.
     static func titles() -> [CGWindowID: String] {
         guard CGPreflightScreenCaptureAccess(),
               let list = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements],
@@ -99,15 +94,52 @@ enum WindowServer {
         return result
     }
 
-    /// Focus a window we have no `AXUIElement` for, which is every window on a
-    /// Space this app has not visited.
+    static var activeSpace: CGSSpaceID { SLSGetActiveSpace(connection) }
+
+    /// Whether `id` is on the active Space.
     ///
-    /// `_SLPSSetFrontProcessWithOptions` takes a window id, so unlike
-    /// `NSRunningApplication.activate()` it names *which* window comes forward,
-    /// and it switches Space to get there. The two synthetic event records that
-    /// follow are what tells the app itself that the window was activated,
-    /// without them Cocoa apps come forward with the wrong window keyed. This
-    /// is yabai's sequence.
+    /// Asked fresh rather than read off the last scan: during a Space
+    /// animation the on-screen window list holds windows from both Spaces, and
+    /// this decides whether a capture is worth keeping.
+    static func isOnActiveSpace(_ id: CGWindowID) -> Bool {
+        let spaces = SLSCopySpacesForWindows(connection, allSpacesMask, [id] as CFArray)?
+            .takeRetainedValue() as? [NSNumber]
+        guard let space = spaces?.first?.uint64Value else { return false }
+        return space == activeSpace
+    }
+
+    /// The size in points the WindowServer says a window is.
+    static func size(ofWindow id: CGWindowID) -> CGSize? {
+        guard let list = CGWindowListCopyWindowInfo([.optionIncludingWindow], id)
+                as? [[String: Any]],
+              let bounds = list.first?[kCGWindowBounds as String] as? [String: CGFloat],
+              let width = bounds["Width"], let height = bounds["Height"]
+        else { return nil }
+        return CGSize(width: width, height: height)
+    }
+
+    /// One window's pixels from the WindowServer's frame store, at the window's
+    /// size in points. 3-18 ms, synchronous.
+    ///
+    /// Not `SCScreenshotManager`: that needs an `SCShareableContent` enumeration
+    /// of all 299 windows before it can filter to one, and returns nothing for
+    /// some windows, Lightroom's included, which this captures fine.
+    ///
+    /// Returns an empty frame for a window whose app released its drawing
+    /// surface while occluded. See `WindowPreview.warm`.
+    static func capture(window id: CGWindowID) -> CGImage? {
+        var target = id
+        let raw = SLSHWCaptureWindowList(connection, &target, 1, captureOptions)?
+            .takeRetainedValue()
+        return (raw as? [CGImage])?.first
+    }
+
+    /// Name which window of an app comes forward, by id.
+    ///
+    /// Does *not* switch Space (it only changes the front process) so callers
+    /// pair it with an activation. The two synthetic event records tell the app
+    /// itself that the window was activated. Without them Cocoa apps come
+    /// forward with the wrong window keyed.
     static func raise(window id: CGWindowID) -> Bool {
         var owner: Int32 = 0
         guard SLSGetWindowOwner(connection, id, &owner) == .success else { return false }
@@ -117,8 +149,7 @@ enum WindowServer {
 
         _SLPSSetFrontProcessWithOptions(&psn, id, kCPSUserGenerated)
 
-        // A synthesised window-activated record. The offsets are the layout of
-        // the event record struct, and only the window id inside it varies.
+        // Event record layout, and only the window id inside it varies.
         var bytes = [UInt8](repeating: 0, count: 0xf8)
         bytes[0x04] = 0xf8
         bytes[0x3a] = 0x10
@@ -127,8 +158,8 @@ enum WindowServer {
             for (index, byte) in raw.enumerated() { bytes[0x3c + index] = byte }
         }
 
-        // 0x01 is "window activated", 0x02 "window deactivated". The pair is
-        // what a real click produces, and apps that only watch one still react.
+        // 0x01 "window activated", 0x02 "window deactivated". A real click
+        // produces both, and apps watching only one still react.
         for phase in [UInt8(0x01), UInt8(0x02)] {
             bytes[0x08] = phase
             _ = bytes.withUnsafeMutableBufferPointer { buffer in
@@ -144,6 +175,12 @@ enum WindowServer {
 private let connection = SLSMainConnectionID()
 
 private let kCPSUserGenerated: UInt32 = 0x200
+
+/// kCGSSpaceCurrent | kCGSSpaceOther | kCGSSpaceAll
+private let allSpacesMask: Int32 = 7
+
+/// `kCGSWindowCaptureNominalResolution | kCGSWindowCaptureIgnoreGlobalClipShape`
+private let captureOptions: UInt32 = 0x0200 | 0x0800
 
 @_silgen_name("SLSMainConnectionID")
 private func SLSMainConnectionID() -> CGSConnectionID
@@ -184,6 +221,20 @@ private func SLSWindowIteratorGetAttributes(_ iterator: CFTypeRef) -> UInt64
 
 @_silgen_name("SLSWindowIteratorGetAlpha")
 private func SLSWindowIteratorGetAlpha(_ iterator: CFTypeRef) -> Float
+
+@_silgen_name("SLSGetActiveSpace")
+private func SLSGetActiveSpace(_ cid: CGSConnectionID) -> CGSSpaceID
+
+@_silgen_name("SLSCopySpacesForWindows")
+private func SLSCopySpacesForWindows(_ cid: CGSConnectionID,
+                                     _ mask: Int32,
+                                     _ windowIDs: CFArray) -> Unmanaged<CFArray>?
+
+@_silgen_name("SLSHWCaptureWindowList")
+private func SLSHWCaptureWindowList(_ cid: CGSConnectionID,
+                                    _ windows: UnsafeMutablePointer<CGWindowID>,
+                                    _ count: Int32,
+                                    _ options: UInt32) -> Unmanaged<CFArray>?
 
 @_silgen_name("SLSGetWindowOwner")
 private func SLSGetWindowOwner(_ cid: CGSConnectionID,

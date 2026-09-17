@@ -48,7 +48,7 @@ final class Switcher {
     }
 
     private let hud = HUDPanel()
-    private let preview = WindowPreview()
+    private let preview = WindowPreview.shared
     private var session: Session?
     private var revealTimer: Timer?
     private var previewTimer: Timer?
