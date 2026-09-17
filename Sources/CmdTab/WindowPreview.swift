@@ -28,6 +28,10 @@ private let warmInterval: TimeInterval = 0.08
 /// refresh faster than the animation finishes, and a window captured mid-slide
 /// comes back cropped: a 2560pt Slack window arrived 296pt wide.
 private let warmLeadIn: TimeInterval = 0.7
+/// How many times a partial frame is re-queued before giving up on it.
+private let partialRetries = 3
+/// How long the active-Space window sets are reused before being recomputed.
+private let activeSpaceFor: TimeInterval = 0.5
 
 /// The thumbnail that appears beside the switcher list once the selection has
 /// settled.
@@ -57,16 +61,25 @@ final class WindowPreview {
     /// window that has since moved to another Space still shows the last frame
     /// we managed to get of it.
     private var cache: [CGWindowID: Shot] = [:]
-    /// `nil` until the first tick fills it, so the window list is read after
-    /// the Space has settled rather than when the refresh asked.
-    private var warmQueue: [CGWindowID]?
+    private var warmQueue: [CGWindowID] = []
+    /// Re-queue counts for windows whose last frame came back partial.
+    private var retries: [CGWindowID: Int] = [:]
+    /// `WindowServer.activeSpaceWindows`, memoised for the length of a queue
+    /// drain: it costs a `CGWindowList` scan and a WindowServer query, and a
+    /// drain asks once per window.
+    private var activeSpaceIDs: Set<CGWindowID> = []
+    private var uncoveredIDs: Set<CGWindowID> = []
+    private var activeSpaceAt = Date.distantPast
+    /// Set by `warm`, drained on the next tick: the active Space's window list
+    /// is read after the Space has settled rather than when the refresh asked.
+    private var sweepPending = false
     private var warmTimer: Timer?
     /// The permission prompt is a system dialog, so ask at most once per launch.
     private var askedForPermission = false
 
     /// Show the preview for `window`, anchored beside the switcher panel.
     func show(_ window: WindowRef, anchor: NSRect, on screen: NSScreen) {
-        let live = WindowServer.isOnActiveSpace(window.id)
+        let live = onActiveSpace().all.contains(window.id)
 
         if let shot = cache[window.id] {
             display(shot.image, anchor: anchor, on: screen)
@@ -76,7 +89,7 @@ final class WindowPreview {
             guard live, Date().timeIntervalSince(shot.taken) > staleAfter else { return }
         }
 
-        guard let image = capture(window.id, live: live) else { return }
+        guard case .image(let image) = capture(window.id, live: live) else { return }
         remember(image, for: window.id, live: live)
         display(image, anchor: anchor, on: screen)
     }
@@ -89,17 +102,41 @@ final class WindowPreview {
     /// distinct colours on its own Space and 6 from one Space over: a toolbar
     /// above flat grey. Slack, on that same unvisited Space, captured at 79.
     func warm() {
-        guard CGPreflightScreenCaptureAccess(), warmTimer == nil else { return }
+        guard CGPreflightScreenCaptureAccess() else { return }
+        sweepPending = true
+        startWarming(after: warmLeadIn)
+    }
 
-        warmQueue = nil
+    /// Re-capture one window whose contents are known to have changed, ignoring
+    /// `warmAfter`. Driven by `AXWatcher`: without it a frame goes stale while
+    /// the row's title, which comes from AX, stays current, and the two
+    /// disagree. Nothing to wait for here, so no lead-in.
+    func recapture(_ id: CGWindowID) {
+        guard CGPreflightScreenCaptureAccess() else { return }
+        warmQueue.removeAll { $0 == id }
+        warmQueue.append(id)
+        startWarming(after: 0)
+    }
+
+    private func startWarming(after delay: TimeInterval) {
+        guard warmTimer == nil else { return }
         // .common, so it fires while the event tap pumps its own run loop
         // source.
         let timer = Timer(timeInterval: warmInterval, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.warmTick() }
         }
-        timer.fireDate = Date().addingTimeInterval(warmLeadIn)
+        timer.fireDate = Date().addingTimeInterval(delay)
         RunLoop.main.add(timer, forMode: .common)
         warmTimer = timer
+    }
+
+    /// Windows on the active Space, and which of them nothing is covering.
+    private func onActiveSpace() -> (all: Set<CGWindowID>, uncovered: Set<CGWindowID>) {
+        if Date().timeIntervalSince(activeSpaceAt) > activeSpaceFor {
+            (activeSpaceIDs, uncoveredIDs) = WindowServer.activeSpaceWindows()
+            activeSpaceAt = Date()
+        }
+        return (activeSpaceIDs, uncoveredIDs)
     }
 
     private func warmTick() {
@@ -107,23 +144,38 @@ final class WindowPreview {
         // stepped through.
         guard !isShowing else { return }
 
-        if warmQueue == nil {
+        if sweepPending {
+            sweepPending = false
             let now = Date()
-            warmQueue = WindowServer.windows(onSpace: WindowServer.activeSpace, titles: [:])
-                .map(\.id)
+            warmQueue += onActiveSpace().all
                 .filter { id in
                     guard let shot = cache[id], shot.live else { return true }
                     return now.timeIntervalSince(shot.taken) > warmAfter
                 }
         }
 
-        guard let id = warmQueue?.popLast() else {
+        guard let id = warmQueue.popLast() else {
             warmTimer?.invalidate()
             warmTimer = nil
             return
         }
-        if let image = capture(id, live: true) {
+        // Checked per capture rather than per queue: a window can leave the
+        // active Space between being queued and being reached, and a frame
+        // taken then would replace a good one with an empty one.
+        guard onActiveSpace().all.contains(id) else { return }
+
+        switch capture(id, live: true) {
+        case .image(let image):
             remember(image, for: id, live: true)
+            retries[id] = nil
+        case .partial:
+            // The cached frame stays: stale beats a sliver. Come back for this
+            // one, but bounded, since a window mid-resize would re-queue forever.
+            let attempts = (retries[id] ?? 0) + 1
+            retries[id] = attempts <= partialRetries ? attempts : nil
+            if retries[id] != nil { warmQueue.append(id) }
+        case .unavailable:
+            retries[id] = nil
         }
     }
 
@@ -144,7 +196,10 @@ final class WindowPreview {
         }.joined()
     }
 
-    /// Distinct colours on a 20x20 grid over the frame.
+    /// Distinct colours on a 20x20 grid over the frame. Stands in for "how much
+    /// is in this frame": an app that dropped its drawing surface captures as a
+    /// toolbar above flat grey, single digits against tens for the same window
+    /// drawn.
     private func colours(_ image: NSImage) -> Int {
         guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
               let data = cgImage.dataProvider?.data,
@@ -180,7 +235,16 @@ final class WindowPreview {
     }
 
     /// Keep the newest `cacheLimit` frames and drop the rest.
+    ///
+    /// A frame of a *covered* window is refused if it holds less than the one it
+    /// would replace: that is what an app which dropped its drawing surface
+    /// hands back, and it is worse than the older frame. An uncovered window is
+    /// always trusted, because its contents may legitimately have gone blank.
     private func remember(_ image: NSImage, for id: CGWindowID, live: Bool) {
+        if let shot = cache[id], !onActiveSpace().uncovered.contains(id),
+           colours(image) < colours(shot.image) {
+            return
+        }
         cache[id] = Shot(image: image, taken: Date(), live: live)
         while cache.count > cacheLimit,
               let oldest = cache.min(by: { $0.value.taken < $1.value.taken })?.key {
@@ -210,23 +274,31 @@ final class WindowPreview {
     /// resampled away rather than cached. Narrower windows are kept as they
     /// arrive (there is no higher-resolution frame to ask for) and drawn at
     /// their own size, which `place` will not exceed.
-    private func capture(_ id: CGWindowID, live: Bool) -> NSImage? {
+    private enum Capture {
+        case image(NSImage)
+        /// Frame smaller than the window: caught mid-animation or mid-resize.
+        /// Worth another try shortly, unlike `unavailable`.
+        case partial
+        case unavailable
+    }
+
+    private func capture(_ id: CGWindowID, live: Bool) -> Capture {
         guard hasPermission(prompt: live),
               let expected = WindowServer.size(ofWindow: id),
               let image = WindowServer.capture(window: id),
               image.width > 0, image.height > 0
-        else { return nil }
+        else { return .unavailable }
 
         // A frame smaller than the window was caught mid-Space animation,
         // composited only as far as it had got. See `warmLeadIn`.
         guard abs(CGFloat(image.width) - expected.width) <= 2,
               abs(CGFloat(image.height) - expected.height) <= 2
-        else { return nil }
+        else { return .partial }
 
         let points = NSSize(width: CGFloat(image.width), height: CGFloat(image.height))
         let target = Int(min(points.width, maxSize.width) * 2)
         let scaled = target < image.width ? downscale(image, toWidth: target) ?? image : image
-        return NSImage(cgImage: scaled, size: points)
+        return .image(NSImage(cgImage: scaled, size: points))
     }
 
     /// Resample to `width`, keeping the aspect ratio. Takes a 2560pt window's

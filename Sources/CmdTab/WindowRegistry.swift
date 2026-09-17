@@ -167,6 +167,7 @@ final class WindowRegistry {
         for window in WindowEnumerator.axWindowsOfAllApps() {
             known[window.id] = window
         }
+        AXWatcher.sync()
         WindowPreview.shared.warm()
     }
 

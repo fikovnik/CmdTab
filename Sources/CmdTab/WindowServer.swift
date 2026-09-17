@@ -96,16 +96,48 @@ enum WindowServer {
 
     static var activeSpace: CGSSpaceID { SLSGetActiveSpace(connection) }
 
-    /// Whether `id` is on the active Space.
+    /// Real windows on the active Space, and which of them nothing is covering.
     ///
-    /// Asked fresh rather than read off the last scan: during a Space
-    /// animation the on-screen window list holds windows from both Spaces, and
-    /// this decides whether a capture is worth keeping.
-    static func isOnActiveSpace(_ id: CGWindowID) -> Bool {
-        let spaces = SLSCopySpacesForWindows(connection, allSpacesMask, [id] as CFArray)?
-            .takeRetainedValue() as? [NSNumber]
-        guard let space = spaces?.first?.uint64Value else { return false }
-        return space == activeSpace
+    /// Whether a window is covered decides how much to trust a capture of it.
+    /// Some apps drop the drawing surface the moment a window is occluded.
+    /// Chrome does, and measured, activating an app over two of its windows
+    /// took their frames from 36 and 15 distinct colours to 7 and 8. A
+    /// terminal keeps drawing and captures fine underneath three others. There
+    /// is no flag that says which kind an app is, so a covered window is
+    /// captured and the result judged on its contents.
+    ///
+    /// `uncovered` is approximated by "no single window in front of it contains
+    /// its frame" rather than by unioning everything in front, because that is
+    /// the case that occurs: same-size windows stacked on one Space.
+    static func activeSpaceWindows() -> (all: Set<CGWindowID>, uncovered: Set<CGWindowID>) {
+        let frames = bounds()
+        var all = Set<CGWindowID>()
+        var uncovered = Set<CGWindowID>()
+        var inFront: [CGRect] = []
+        for window in windows(onSpace: activeSpace, titles: [:]) {
+            all.insert(window.id)
+            guard let frame = frames[window.id] else { continue }
+            if !inFront.contains(where: { $0.contains(frame) }) { uncovered.insert(window.id) }
+            inFront.append(frame)
+        }
+        return (all, uncovered)
+    }
+
+    /// Every window's frame, from one `CGWindowList` scan.
+    private static func bounds() -> [CGWindowID: CGRect] {
+        guard let list = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements],
+                                                    kCGNullWindowID) as? [[String: Any]]
+        else { return [:] }
+
+        var result: [CGWindowID: CGRect] = [:]
+        for info in list {
+            guard let id = info[kCGWindowNumber as String] as? CGWindowID,
+                  let raw = info[kCGWindowBounds as String] as? [String: CGFloat]
+            else { continue }
+            result[id] = CGRect(x: raw["X"] ?? 0, y: raw["Y"] ?? 0,
+                                width: raw["Width"] ?? 0, height: raw["Height"] ?? 0)
+        }
+        return result
     }
 
     /// The size in points the WindowServer says a window is.
@@ -176,8 +208,6 @@ private let connection = SLSMainConnectionID()
 
 private let kCPSUserGenerated: UInt32 = 0x200
 
-/// kCGSSpaceCurrent | kCGSSpaceOther | kCGSSpaceAll
-private let allSpacesMask: Int32 = 7
 
 /// `kCGSWindowCaptureNominalResolution | kCGSWindowCaptureIgnoreGlobalClipShape`
 private let captureOptions: UInt32 = 0x0200 | 0x0800
@@ -224,11 +254,6 @@ private func SLSWindowIteratorGetAlpha(_ iterator: CFTypeRef) -> Float
 
 @_silgen_name("SLSGetActiveSpace")
 private func SLSGetActiveSpace(_ cid: CGSConnectionID) -> CGSSpaceID
-
-@_silgen_name("SLSCopySpacesForWindows")
-private func SLSCopySpacesForWindows(_ cid: CGSConnectionID,
-                                     _ mask: Int32,
-                                     _ windowIDs: CFArray) -> Unmanaged<CFArray>?
 
 @_silgen_name("SLSHWCaptureWindowList")
 private func SLSHWCaptureWindowList(_ cid: CGSConnectionID,
