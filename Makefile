@@ -1,5 +1,5 @@
 APP_NAME  := CmdTab
-BUNDLE_ID := com.krikava.cmdtab
+BUNDLE_ID := net.fikovnik.cmdtab
 APP       := build/$(APP_NAME).app
 
 # Stable code-signing identity, created on demand by scripts/make-cert.sh.
@@ -27,6 +27,7 @@ app: cert build
 	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources
 	cp .build/$(CONFIG)/$(APP_NAME) $(APP)/Contents/MacOS/
 	cp Resources/Info.plist $(APP)/Contents/Info.plist
+	plutil -replace CFBundleIdentifier -string $(BUNDLE_ID) $(APP)/Contents/Info.plist
 	codesign --force --sign "$(IDENTITY)" --identifier $(BUNDLE_ID) $(APP)
 	@codesign -d -r- $(APP) 2>&1 | grep designated
 
