@@ -87,7 +87,8 @@ final class WindowPreview {
         panel?.orderOut(nil)
     }
 
-    /// Prompt for Screen Recording, for the menu item. The grant only takes
+    /// Prompt for Screen Recording, for the menu item. Titles for off-Space
+    /// windows ride on the same grant. The grant only takes
     /// effect on relaunch, which is macOS's rule, not ours.
     static func requestPermission() {
         if !CGRequestScreenCaptureAccess() {

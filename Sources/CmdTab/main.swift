@@ -9,6 +9,14 @@ if let flag = arguments.firstIndex(of: "--render-hud") {
 
 // Same report the menu item writes, on stdout. The menu needs a GUI session.
 // This does not, so it works over ssh and in a build script.
+// Temporary: verify the WindowServer focus path in isolation.
+if let flag = arguments.firstIndex(of: "--raise"),
+   let id = arguments.indices.contains(flag + 1) ? UInt32(arguments[flag + 1]) : nil {
+    _ = NSApplication.shared
+    print("raise \(id): \(WindowServer.raise(window: id))")
+    exit(0)
+}
+
 if arguments.contains("--report") {
     _ = NSApplication.shared
     print(Diagnostics.report())

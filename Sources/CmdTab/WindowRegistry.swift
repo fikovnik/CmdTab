@@ -1,22 +1,21 @@
 import AppKit
 
-/// Everything we have ever seen, because you cannot ask for it all at once.
+/// Every window AX has ever described, plus the state that orders them.
 ///
 /// `kAXWindowsAttribute` only reports an app's windows on the *current* Space,
-/// plus its minimized ones. Windows sitting on another Space are invisible to
-/// it, verified on a live session: Slack's 2560x1410 window on Desktop 1 is
-/// plainly there in `CGWindowList`, and AX reports zero windows for Slack.
+/// plus its minimized ones. Windows on another Space are invisible to it,
+/// sitting on Desktop 3, AX answers `count=0, status=success` for every app
+/// whose windows are on Desktop 1, and neither a 5 s messaging timeout nor
+/// `AXManualAccessibility` changes that.
 ///
-/// So the widened switcher list cannot be enumerated on demand. Instead we
-/// learn windows whenever macOS is willing to show them: every Space change,
-/// app activation, and launch, and hold onto the `AXUIElement` afterwards.
+/// So AX is not enough on its own. The windows on Spaces we are not standing on
+/// come from `WindowServer` instead, which can see all of them. What this cache
+/// adds is the `AXUIElement` and the live title, learned whenever macOS is
+/// willing to hand them over: every Space change, app activation, and launch.
 /// Entries are dropped once the WindowServer stops listing the window at all.
 ///
 /// The registry also keeps the use stamps that order the list, and the Space
 /// map that labels it, so all per-window state lives in one place.
-///
-/// Consequence worth knowing: a Space this app has never seen contributes
-/// nothing until you visit it once.
 @MainActor
 final class WindowRegistry {
     static let shared = WindowRegistry()
@@ -128,50 +127,33 @@ final class WindowRegistry {
         stamps = stamps.filter { live.contains($0.key) }
     }
 
-    /// One row per app that has windows on a Space no AX walk has described.
+    /// One row per real window the WindowServer reports, minus the ids AX has
+    /// already described. These are the windows on the Spaces you are not on.
     ///
-    /// Without these the all-Spaces default cannot bootstrap itself: a Space is
-    /// invisible to `kAXWindowsAttribute` until you are standing on it, so a
-    /// freshly launched CmdTab would list only the current Space, and you could
-    /// not use the switcher to get anywhere else. The WindowServer *will* say
-    /// which apps own windows on which Space, just not what those windows are,
-    /// so offer the app. Committing to one activates it, which lands on that
-    /// Space and lets the following refresh learn its windows properly.
-    ///
-    /// Keyed on app-and-Space rather than per window because the WindowServer
-    /// counts utility panels as windows: Lightroom reports twelve where AX
-    /// reports one. One honest row beats eleven phantoms.
-    func placeholders(besides known: [WindowRef], owners: [CGWindowID: pid_t]) -> [WindowRef] {
-        struct AppSpace: Hashable {
-            let pid: pid_t
-            let space: CGSSpaceID
-        }
-
-        var described = Set<AppSpace>()
-        for window in known {
-            guard let space = spaces.space(forWindow: window.id) else { continue }
-            described.insert(AppSpace(pid: window.pid, space: space))
-        }
-
+    /// They carry no `AXUIElement`, since nothing can produce one for an off-Space
+    /// window, so `WindowEnumerator.focus` routes them through the WindowServer
+    /// instead. Titles come from `CGWindowList`, which needs Screen Recording, and
+    /// without it a row is app name plus Space label, and gains its title on the
+    /// refresh that follows the first visit to that Space.
+    func serverWindows(besides described: Set<CGWindowID>) -> [WindowRef] {
         var apps: [pid_t: NSRunningApplication] = [:]
         for app in NSWorkspace.shared.runningApplications where app.activationPolicy == .regular {
             apps[app.processIdentifier] = app
         }
         apps[ProcessInfo.processInfo.processIdentifier] = nil
 
+        let titles = WindowServer.titles()
         var result: [WindowRef] = []
-        var added = Set<AppSpace>()
-        for (space, ids) in spaces.windowsPerSpace() {
-            // CGS lists a Space front to back, so the first id an app owns here
-            // is the window activating it will land on.
-            for id in ids {
-                guard let pid = owners[id], let app = apps[pid] else { continue }
-                let key = AppSpace(pid: pid, space: space)
-                guard !described.contains(key), added.insert(key).inserted else { continue }
-                result.append(WindowRef(id: id,
-                                        pid: pid,
+        for space in spaces.orderedSpaces {
+            for window in WindowServer.windows(onSpace: space, titles: titles) {
+                // Noted for every window found, described or not: this scan is
+                // the cheapest and freshest answer to "which Space is it on".
+                spaces.note(window: window.id, onSpace: space)
+                guard !described.contains(window.id), let app = apps[window.pid] else { continue }
+                result.append(WindowRef(id: window.id,
+                                        pid: window.pid,
                                         appName: app.localizedName ?? "?",
-                                        title: "",
+                                        title: window.title ?? "",
                                         element: nil,
                                         icon: app.icon,
                                         spaceLabel: spaces.label(forSpace: space)))

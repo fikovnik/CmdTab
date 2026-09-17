@@ -52,6 +52,7 @@ enum Diagnostics {
     /// What both switcher scopes currently resolve to, plus per-app AX counts.
     static func report() -> String {
         var out = "AXIsProcessTrusted: \(AXIsProcessTrusted())\n"
+        out += "ScreenRecording: \(CGPreflightScreenCaptureAccess())\n"
 
         var clock = Date()
         let current = WindowEnumerator.windows(.currentSpace)
@@ -70,10 +71,10 @@ enum Diagnostics {
                       all.count, Date().timeIntervalSince(clock) * 1000)
         for window in all {
             let stamp = WindowRegistry.shared.stamp(of: window.id).map(String.init) ?? "-"
-            // A placeholder stands for "this app has a window on that Space",
-            // which is all the WindowServer will say about a Space we have not
-            // visited. It resolves to real windows once you switch to it.
-            let kind = window.element == nil ? "placeholder" : "window"
+            // "server" is a window only the WindowServer can see, because it is
+            // on a Space we are not standing on. It gains an AX element, and a
+            // title if Screen Recording is off, once you switch to that Space.
+            let kind = window.element == nil ? "server" : "ax"
             out += "  stamp=\(stamp) \(kind) [\(window.spaceLabel ?? "-")] \(window.appName) | \(window.title)\n"
         }
 

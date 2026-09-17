@@ -6,8 +6,9 @@ struct WindowRef: Identifiable {
     let pid: pid_t
     let appName: String
     var title: String
-    /// `nil` for a placeholder row, an app we know has a window on a Space we
-    /// have never visited, so AX has never described it. See `placeholders`.
+    /// `nil` for a window only the WindowServer can see, anything on a Space
+    /// this app is not standing on. Nothing can produce an `AXUIElement` for
+    /// one, so focusing it goes through `WindowServer.raise`.
     let element: AXUIElement?
     let icon: NSImage?
     /// "Desktop 2", "Full Screen", … Only populated in all-Spaces mode.
@@ -37,10 +38,10 @@ enum WindowEnumerator {
     /// Spaces are never on screen together), so ordering falls to the use
     /// stamps the registry keeps. See `Rank` below.
     ///
-    /// AX, not `CGWindowList`, is the source of truth for off-Space windows.
-    /// Off-screen `CGWindowList` entries are mostly compositing surfaces whose
-    /// IDs match no AX window at all, and a single Chrome window can show up as
-    /// twenty of them, and a minimized window's real ID never appears on screen.
+    /// Off-Space windows come from `WindowServer`, which is the only thing that
+    /// can see them at all. AX still wins wherever it has an answer: its entries
+    /// carry a live title and a usable `AXUIElement`, so the merge below prefers
+    /// them and asks the WindowServer only for the ids AX left out.
     static func windows(_ scope: WindowScope) -> [WindowRef] {
         let candidates = candidates(onScreenOnly: true)
         let onSpace = resolve(candidates)
@@ -50,11 +51,11 @@ enum WindowEnumerator {
 
         guard scope == .allSpaces else { return onSpace }
 
-        // Cheap enough for a keypress: one CGWindowList call, no AX traffic.
-        // The full AX walk stays on the notification path, so a window opened on
-        // another Space can lag by one refresh cycle.
-        let owners = liveWindowOwners()
-        registry.evictClosed(live: Set(owners.keys))
+        // Cheap enough for a keypress: CGWindowList plus one WindowServer query
+        // per Space, no AX traffic. The full AX walk stays on the notification
+        // path, so a title can lag by one refresh cycle. The window itself
+        // cannot, because the WindowServer sees it the moment it exists.
+        registry.evictClosed(live: Set(liveWindowOwners().keys))
 
         var zOrder: [CGWindowID: Int] = [:]
         for (position, candidate) in candidates.enumerated() {
@@ -62,7 +63,7 @@ enum WindowEnumerator {
         }
 
         let known = registry.all
-        var result = (known + registry.placeholders(besides: known, owners: owners))
+        var result = (known + registry.serverWindows(besides: Set(known.map(\.id))))
             .map { (rank: rank(of: $0, zOrder: zOrder, registry: registry), window: $0) }
             .sorted { $0.rank < $1.rank }
             .map(\.window)
@@ -109,8 +110,8 @@ enum WindowEnumerator {
     }
 
     /// Every window the WindowServer still knows about, in any state, with its
-    /// owning process. Evicts closed registry entries, and tells the placeholder
-    /// pass who owns the window ids CGS reports. One call, no AX traffic.
+    /// owning process. The eviction list for the registry: an id missing here is
+    /// a window that is gone. One call, no AX traffic.
     static func liveWindowOwners() -> [CGWindowID: pid_t] {
         guard let infoList = CGWindowListCopyWindowInfo([], kCGNullWindowID) as? [[String: Any]] else {
             return [:]
@@ -147,13 +148,12 @@ enum WindowEnumerator {
         if app?.isHidden == true { app?.unhide() }
 
         guard let element = window.element else {
-            // A placeholder: the WindowServer says this app has a window on that
-            // Space, but AX has never been able to describe it. Activating the
-            // app lands on it, and the refresh that follows the activation
-            // notification learns that Space for real, so the next cycle can
-            // aim at individual windows.
-            Diagnostics.note("focus placeholder \(window.appName)")
-            app?.activate()
+            // An off-Space window: real, but AX cannot describe it, so there is
+            // no element to mark main. The WindowServer takes a window id and
+            // switches Space to reach it. Falling back to activating the app
+            // still lands on the right Space, just not necessarily this window.
+            Diagnostics.note("focus off-Space \(window.appName) | \(window.title)")
+            if !WindowServer.raise(window: window.id) { app?.activate() }
             WindowRegistry.shared.promote(window.id)
             return
         }
