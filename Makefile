@@ -6,7 +6,9 @@ APP       := build/$(APP_NAME).app
 # An ad-hoc signature pins the designated requirement to the binary's cdhash,
 # so macOS drops the Accessibility grant on every rebuild. A certificate makes
 # the requirement `identifier ... and certificate leaf ...`, which does not move.
-IDENTITY := CmdTab Self-Signed
+# CI has no keychain to put one in, so it passes IDENTITY=- for an ad-hoc
+# signature and accepts that the grant is per-download.
+IDENTITY ?= CmdTab Self-Signed
 
 # `debug` additionally builds --report, the Write Diagnostics menu item and the
 # Space-change auto-trace. See Diagnostics in the README.
@@ -17,7 +19,9 @@ CONFIG ?= release
 all: app
 
 cert:
+ifneq ($(IDENTITY),-)
 	@./scripts/make-cert.sh "$(IDENTITY)"
+endif
 
 build:
 	swift build -c $(CONFIG)

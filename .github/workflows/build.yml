@@ -1,0 +1,58 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  app:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: swift --version && xcodebuild -version
+
+      # IDENTITY=- signs ad-hoc. A hosted runner has no login keychain to hold
+      # the stable certificate, and a download is a new binary every time
+      # anyway, so the Accessibility grant cannot survive either way.
+      - name: Build app
+        run: make app IDENTITY=-
+
+      - name: Check the bundle
+        run: |
+          codesign --verify --deep --strict --verbose=2 build/CmdTab.app
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' \
+            build/CmdTab.app/Contents/Info.plist)" = net.fikovnik.cmdtab
+
+      # ditto, not zip: it keeps the bundle's symlinks and permission bits.
+      - name: Package
+        run: ditto -c -k --keepParent build/CmdTab.app CmdTab.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CmdTab
+          path: CmdTab.zip
+          if-no-files-found: error
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" CmdTab.zip
+             --title "${GITHUB_REF_NAME}" --generate-notes
+
+  # The diagnostics code only compiles in the debug configuration, so a release
+  # build cannot catch a break in it. This job is what keeps it honest.
+  diagnostics-build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build with diagnostics
+        run: make app CONFIG=debug IDENTITY=-
