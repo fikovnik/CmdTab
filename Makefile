@@ -8,6 +8,10 @@ APP       := build/$(APP_NAME).app
 # the requirement `identifier ... and certificate leaf ...`, which does not move.
 IDENTITY := CmdTab Self-Signed
 
+# `debug` additionally builds --report, the Write Diagnostics menu item and the
+# Space-change auto-trace. See Diagnostics in the README.
+CONFIG ?= release
+
 .PHONY: all cert build app install uninstall run stop reset-permissions clean
 
 all: app
@@ -16,12 +20,12 @@ cert:
 	@./scripts/make-cert.sh "$(IDENTITY)"
 
 build:
-	swift build -c release
+	swift build -c $(CONFIG)
 
 app: cert build
 	rm -rf $(APP)
 	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources
-	cp .build/release/$(APP_NAME) $(APP)/Contents/MacOS/
+	cp .build/$(CONFIG)/$(APP_NAME) $(APP)/Contents/MacOS/
 	cp Resources/Info.plist $(APP)/Contents/Info.plist
 	codesign --force --sign "$(IDENTITY)" --identifier $(BUNDLE_ID) $(APP)
 	@codesign -d -r- $(APP) 2>&1 | grep designated

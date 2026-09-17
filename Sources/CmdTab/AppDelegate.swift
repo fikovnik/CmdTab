@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         installStatusItem()
         WindowRegistry.shared.start()
 
+        #if DIAGNOSTICS
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main
         ) { _ in
@@ -20,6 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 Diagnostics.trace("activeSpaceDidChange")
             }
         }
+        #endif
 
         if requestAccessibility() {
             startTap()
@@ -64,9 +66,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         item.button?.title = "⇥…"
 
         let menu = NSMenu()
+        #if DIAGNOSTICS
         menu.addItem(withTitle: "Write Diagnostics",
                      action: #selector(writeDiagnostics),
                      keyEquivalent: "").target = self
+        #endif
         menu.addItem(withTitle: "Accessibility Settings…",
                      action: #selector(openAccessibilitySettings),
                      keyEquivalent: "").target = self
@@ -80,11 +84,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = item
     }
 
+    #if DIAGNOSTICS
     @objc private func writeDiagnostics() {
         Diagnostics.trace("menu")
         NSWorkspace.shared.selectFile(Diagnostics.traceURL.path,
                                       inFileViewerRootedAtPath: Diagnostics.traceURL.deletingLastPathComponent().path)
     }
+    #endif
 
     /// Screen Recording buys thumbnails and `kCGWindowName`, the only source of
     /// a title for an off-Space window. macOS caches the decision per process,
