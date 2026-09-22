@@ -61,14 +61,27 @@ enum WindowEnumerator {
             zOrder[candidate.id] = position
         }
 
+        // One CGWindowList scan, shared: it names the windows only the
+        // WindowServer can see, and re-titles the remembered ones below.
+        let titles = WindowServer.titles()
         let known = registry.all
-        var result = (known + registry.serverWindows(besides: Set(known.map(\.id))))
+        var result = (known + registry.serverWindows(besides: Set(known.map(\.id)), titles: titles))
             .map { (rank: rank(of: $0, zOrder: zOrder, registry: registry), window: $0) }
             .sorted { $0.rank < $1.rank }
             .map(\.window)
 
+        let described = Set(onSpace.map(\.id))
         for index in result.indices {
-            result[index].spaceLabel = registry.spaceLabel(forWindow: result[index].id)
+            let id = result[index].id
+            result[index].spaceLabel = registry.spaceLabel(forWindow: id)
+            // A remembered window keeps the title AX gave it when it was last
+            // on the active Space, for a browser whichever tab was open
+            // then. CGWindowList sees every Space, so it holds the fresher
+            // answer for the rows AX could not re-read. Empty without Screen
+            // Recording, which leaves the remembered title in place.
+            if !described.contains(id), let title = titles[id], !title.isEmpty {
+                result[index].title = title
+            }
         }
         return result
     }
@@ -234,7 +247,15 @@ enum WindowEnumerator {
             }
         }
 
-        return candidates.compactMap { byID[$0.id] }
+        // An app that misses the 100 ms messaging timeout answers with
+        // nothing, which would drop every one of its windows from the list at
+        // once, and with twenty windows open Chrome is the likeliest to miss
+        // it. These are on screen right now, so fall back to what the registry
+        // remembers: a stale title beats a missing row. A window it has never
+        // described is still dropped, which is what filters out the panels and
+        // popups `isRealWindow` rejects.
+        let registry = WindowRegistry.shared
+        return candidates.compactMap { byID[$0.id] ?? registry.remembered($0.id) }
     }
 
     /// `ids == nil` returns every real window of the process, on any Space.
@@ -244,9 +265,12 @@ enum WindowEnumerator {
         AXUIElementSetMessagingTimeout(app, 0.1)
 
         var raw: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &raw) == .success,
-              let windows = raw as? [AXUIElement]
-        else { return [] }
+        let status = AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &raw)
+        guard status == .success, let windows = raw as? [AXUIElement] else {
+            // -25204 is kAXErrorCannotComplete, what the timeout above reports.
+            Diagnostics.note("ax windows failed pid=\(pid) status=\(status.rawValue)")
+            return []
+        }
 
         let running = NSRunningApplication(processIdentifier: pid)
         let appName = running?.localizedName ?? "?"

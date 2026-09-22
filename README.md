@@ -62,8 +62,9 @@ off, at the cost of rendering windows you cannot see.
 whatever the WindowServer still holds, which for some apps is nothing.
 - **Titles on unvisited Spaces**: listed from launch, but without Screen
 Recording those rows carry app name and Space label until your first visit.
-- **Stale off-Space titles**: a remembered window keeps the title it had when
-last seen, refreshed next time you visit its Space.
+- **Stale off-Space titles**: without Screen Recording a remembered window
+keeps the title it had when last seen, refreshed next time you visit its Space.
+With it, `CGWindowList` supplies the current one.
 - **Secure Input**: macOS blocks all event taps while a password field has
 focus. Shortcuts are inert until you leave it.
 - **Hung apps**: the AX messaging timeout is 100 ms per app, so a beachballing

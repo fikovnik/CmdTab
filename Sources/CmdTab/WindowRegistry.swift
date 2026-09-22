@@ -109,6 +109,10 @@ final class WindowRegistry {
 
     var all: [WindowRef] { Array(known.values) }
 
+    /// What the registry last learned about one window, if anything. The
+    /// fallback for an app that misses its messaging timeout.
+    func remembered(_ id: CGWindowID) -> WindowRef? { known[id] }
+
     /// Fold a freshly scanned list in. The scan's titles and icons are newer
     /// than anything held here, so they win.
     func learn(_ windows: [WindowRef]) {
@@ -129,14 +133,14 @@ final class WindowRegistry {
     /// through the WindowServer. Titles come from `CGWindowList`, which needs
     /// Screen Recording. Without it a row is app name plus Space label until
     /// the first visit to that Space.
-    func serverWindows(besides described: Set<CGWindowID>) -> [WindowRef] {
+    func serverWindows(besides described: Set<CGWindowID>,
+                       titles: [CGWindowID: String]) -> [WindowRef] {
         var apps: [pid_t: NSRunningApplication] = [:]
         for app in NSWorkspace.shared.runningApplications where app.activationPolicy == .regular {
             apps[app.processIdentifier] = app
         }
         apps[ProcessInfo.processInfo.processIdentifier] = nil
 
-        let titles = WindowServer.titles()
         var result: [WindowRef] = []
         for space in spaces.orderedSpaces {
             for window in WindowServer.windows(onSpace: space, titles: titles) {
