@@ -175,7 +175,7 @@ final class WindowRegistry {
     /// every app over the Accessibility API. Doing that inline would block the
     /// main thread (and so the event tap) right when someone is switching
     /// windows in a hurry. Coalesce instead.
-    private func scheduleRefresh() {
+    func scheduleRefresh() {
         pendingRefresh?.invalidate()
         let timer = Timer(timeInterval: 0.4, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated { self?.refresh() }

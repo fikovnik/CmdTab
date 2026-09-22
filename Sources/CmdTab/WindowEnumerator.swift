@@ -153,9 +153,9 @@ enum WindowEnumerator {
             // raise names the right window but does not switch Space. Raising
             // first makes the app frontmost, which turns `activate` into a
             // no-op and leaves you on the wrong Space.
-            Diagnostics.note("focus off-Space \(window.appName) | \(window.title)")
             app?.activate()
-            _ = WindowServer.raise(window: window.id)
+            let raised = WindowServer.raise(window: window.id)
+            Diagnostics.note("focus server id=\(window.id) raised=\(raised) \(window.appName) | \(window.title)")
             WindowRegistry.shared.promote(window.id)
             return
         }
@@ -168,9 +168,10 @@ enum WindowEnumerator {
 
         // Mark it main *before* activating, so the app comes forward on this
         // window instead of flashing whatever its previous main window was.
-        AXUIElementSetAttributeValue(element, kAXMainAttribute as CFString, kCFBooleanTrue)
-        AXUIElementPerformAction(element, kAXRaiseAction as CFString)
+        let main = AXUIElementSetAttributeValue(element, kAXMainAttribute as CFString, kCFBooleanTrue)
+        let raise = AXUIElementPerformAction(element, kAXRaiseAction as CFString)
         app?.activate()
+        Diagnostics.note("focus ax id=\(window.id) main=\(main.rawValue) raise=\(raise.rawValue) \(window.appName) | \(window.title)")
 
         // Now the most recently used window, wherever it lives. Half of what
         // makes the next cycle able to come back here.
