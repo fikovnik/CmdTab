@@ -7,21 +7,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var tap = HotkeyTap(switcher: switcher)
     private var statusItem: NSStatusItem?
     private var permissionTimer: Timer?
+    private var spaces = SpaceMap()
+    /// Appended to the desktop number: "…" until the tap is up, "!" if it
+    /// could not be created.
+    private var tapMarker = "…"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         installStatusItem()
         WindowRegistry.shared.start()
 
-        #if DIAGNOSTICS
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main
-        ) { _ in
+        ) { [weak self] _ in
             MainActor.assumeIsolated {
+                // Desktops come and go, so renumber rather than just re-read.
+                self?.spaces = SpaceMap()
+                self?.updateStatusTitle()
+                #if DIAGNOSTICS
                 guard Diagnostics.autoTraceEnabled else { return }
                 Diagnostics.trace("activeSpaceDidChange")
+                #endif
             }
         }
-        #endif
 
         if requestAccessibility() {
             startTap()
@@ -54,16 +61,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func startTap() {
         guard tap.start() else {
-            statusItem?.button?.title = "⇥!"
+            tapMarker = "!"
+            updateStatusTitle()
             NSLog("CmdTab: failed to create event tap")
             return
         }
-        statusItem?.button?.title = "⇥"
+        tapMarker = ""
+        updateStatusTitle()
+    }
+
+    /// A full-screen Space has no desktop number, so it keeps the tab glyph.
+    private func updateStatusTitle() {
+        let desktop = spaces.number(forSpace: WindowServer.activeSpace).map(String.init) ?? "⇥"
+        statusItem?.button?.title = desktop + tapMarker
     }
 
     private func installStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        item.button?.title = "⇥…"
 
         let menu = NSMenu()
         #if DIAGNOSTICS
@@ -82,6 +96,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         item.menu = menu
 
         statusItem = item
+        updateStatusTitle()
     }
 
     #if DIAGNOSTICS

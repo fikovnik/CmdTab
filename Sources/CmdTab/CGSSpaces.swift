@@ -29,6 +29,7 @@ private func CGSCopySpacesForWindows(_ cid: CGSConnectionID,
 final class SpaceMap {
     private let connection = CGSMainConnectionID()
     private var labels: [CGSSpaceID: String] = [:]
+    private var numbers: [CGSSpaceID: Int] = [:]
     private var ranks: [CGSSpaceID: Int] = [:]
     private var ordered: [CGSSpaceID] = []
     private var cache: [CGWindowID: CGSSpaceID?] = [:]
@@ -52,6 +53,7 @@ final class SpaceMap {
                 var label: String
                 if (space["type"] as? NSNumber)?.intValue ?? 0 == 0 {
                     desktopNumber += 1
+                    numbers[id] = desktopNumber
                     label = "Desktop \(desktopNumber)"
                 } else {
                     label = "Full Screen"
@@ -85,6 +87,10 @@ final class SpaceMap {
     }
 
     func label(forSpace space: CGSSpaceID) -> String? { labels[space] }
+
+    /// The Space's position within its display, as Mission Control numbers it.
+    /// Nil for a full-screen Space, which has no desktop number.
+    func number(forSpace space: CGSSpaceID) -> Int? { numbers[space] }
 
     /// Every Space, left to right.
     var orderedSpaces: [CGSSpaceID] { ordered }
