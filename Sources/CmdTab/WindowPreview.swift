@@ -78,10 +78,17 @@ final class WindowPreview {
     private var askedForPermission = false
 
     /// Show the preview for `window`, anchored beside the switcher panel.
+    ///
+    /// The panel shows the selected window or nothing at all. With no frame for
+    /// it, it comes down rather than keeping the previous selection's
+    /// thumbnail: the panel stays up across a step, so a silent return leaves a
+    /// frame that belongs to another window sitting under this one's title,
+    /// which reads as two windows sharing one preview.
     func show(_ window: WindowRef, anchor: NSRect, on screen: NSScreen) {
         let live = onActiveSpace().all.contains(window.id)
+        let cached = cache[window.id]
 
-        if let shot = cache[window.id] {
+        if let shot = cached {
             display(shot.image, anchor: anchor, on: screen)
             // Off-Space with a frame already cached: a new capture cannot
             // improve on it. Either the cached frame was taken on the window's
@@ -89,7 +96,10 @@ final class WindowPreview {
             guard live, Date().timeIntervalSince(shot.taken) > staleAfter else { return }
         }
 
-        guard case .image(let image) = capture(window.id, live: live) else { return }
+        guard case .image(let image) = capture(window.id, live: live) else {
+            if cached == nil { hide() }
+            return
+        }
         remember(image, for: window.id, live: live)
         display(image, anchor: anchor, on: screen)
     }
@@ -318,7 +328,13 @@ final class WindowPreview {
     // MARK: - Placement
 
     private func display(_ image: NSImage, anchor: NSRect, on screen: NSScreen) {
-        guard let frame = place(image.size, anchor: anchor, on: screen.visibleFrame) else { return }
+        // Too little room to draw this one legibly. Same rule as `show`: what
+        // the panel is holding belongs to the previous selection, so take it
+        // down instead of leaving it under the wrong title.
+        guard let frame = place(image.size, anchor: anchor, on: screen.visibleFrame) else {
+            hide()
+            return
+        }
         let panel = ensurePanel()
         panel.setFrame(frame, display: false)
         imageView.frame = NSRect(origin: .zero, size: frame.size).insetBy(dx: inset, dy: inset)
