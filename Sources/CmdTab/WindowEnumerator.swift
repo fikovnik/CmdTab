@@ -159,16 +159,29 @@ enum WindowEnumerator {
         let app = NSRunningApplication(processIdentifier: window.pid)
         if app?.isHidden == true { app?.unhide() }
 
-        guard let element = window.element else {
-            // Off-Space: AX cannot describe it, so there is no element to mark
-            // main. Both calls are needed, in this order. `activate` switches
-            // Space but lands on whichever window the app last had main. The
-            // raise names the right window but does not switch Space. Raising
-            // first makes the app frontmost, which turns `activate` into a
-            // no-op and leaves you on the wrong Space.
+        // Which route to take is a question about where the window *is*, not
+        // about whether AX happens to hold an element for it. Those were the
+        // same question only by accident: a window that left its Space could
+        // never be walked again, so it kept no element. Windows now keep their
+        // element after leaving a Space, and an off-Space element accepts
+        // kAXMain and kAXRaise, reports success, and changes nothing, which
+        // leaves `activate` to come forward on whatever window the app last
+        // had main, on the Space you were already on.
+        //
+        // An unknown Space falls back to the element test, so this can only
+        // move a window onto the route it is proven to need.
+        let offSpace = WindowRegistry.shared.space(forWindow: window.id)
+            .map { !SpaceMap.visibleSpaces().contains($0) } ?? false
+
+        guard !offSpace, let element = window.element else {
+            // Both calls are needed, in this order. `activate` switches Space
+            // but lands on whichever window the app last had main. The raise
+            // names the right window but does not switch Space. Raising first
+            // makes the app frontmost, which turns `activate` into a no-op and
+            // leaves you on the wrong Space.
             app?.activate()
             let raised = WindowServer.raise(window: window.id)
-            Diagnostics.note("focus server id=\(window.id) raised=\(raised) \(window.appName) | \(window.title)")
+            Diagnostics.note("focus server id=\(window.id) raised=\(raised) offSpace=\(offSpace) \(window.appName) | \(window.title)")
             WindowRegistry.shared.promote(window.id)
             return
         }

@@ -68,6 +68,28 @@ final class SpaceMap {
         }
     }
 
+    /// The Space showing on each display right now.
+    ///
+    /// Read fresh from the WindowServer rather than off an instance: this
+    /// decides how a window gets focused, and a stale answer picks the wrong
+    /// route. With "Displays have separate Spaces" (the macOS default) more
+    /// than one Space is visible at a time, so the focused display's active
+    /// Space is not the whole answer.
+    static func visibleSpaces() -> Set<CGSSpaceID> {
+        guard let raw = CGSCopyManagedDisplaySpaces(CGSMainConnectionID())?.takeRetainedValue(),
+              let displays = raw as? [[String: Any]]
+        else { return [] }
+
+        var result: Set<CGSSpaceID> = []
+        for display in displays {
+            guard let current = display["Current Space"] as? [String: Any],
+                  let id = (current["ManagedSpaceID"] as? NSNumber)?.uint64Value
+            else { continue }
+            result.insert(id)
+        }
+        return result
+    }
+
     func space(forWindow window: CGWindowID) -> CGSSpaceID? {
         if let cached = cache[window] { return cached }
         let ids = CGSCopySpacesForWindows(connection, allSpacesMask, [window] as CFArray)?

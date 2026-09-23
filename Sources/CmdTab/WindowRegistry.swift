@@ -103,6 +103,9 @@ final class WindowRegistry {
 
     func spaceLabel(forWindow id: CGWindowID) -> String? { spaces.label(forWindow: id) }
 
+    /// Which Space a window is on, for deciding how to focus it.
+    func space(forWindow id: CGWindowID) -> CGSSpaceID? { spaces.space(forWindow: id) }
+
     func spaceRank(forWindow id: CGWindowID) -> Int { spaces.rank(forWindow: id) }
 
     // MARK: - Contents
