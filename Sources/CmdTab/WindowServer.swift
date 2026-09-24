@@ -181,22 +181,32 @@ enum WindowServer {
 
         _SLPSSetFrontProcessWithOptions(&psn, id, kCPSUserGenerated)
 
-        // Event record layout, and only the window id inside it varies.
-        var bytes = [UInt8](repeating: 0, count: 0xf8)
+        // A synthetic click carrying the window id, which is what makes the
+        // window key. Three details are not arbitrary. All three are measured
+        // findings:
+        //
+        //  * 0x100 bytes allocated, though the record still declares 0xf8 at
+        //    0x04. Since macOS 14.7.4 the WindowServer's `CGSEncodeEventRecord`
+        //    reads past the end of the record and aborts on whatever it finds.
+        //  * A real point far past the bottom-right corner rather than the
+        //    `0xff` fill, which is NaN. Some apps sanitize NaN, and the click
+        //    then lands somewhere real. Off the corner there is nothing to hit.
+        //  * The mouse-down alone. The down is what makes the window key, an
+        //    up on its own does nothing, and sending the pair means a control
+        //    under the point could be activated.
+        var bytes = [UInt8](repeating: 0, count: 0x100)
         bytes[0x04] = 0xf8
         bytes[0x3a] = 0x10
-        for offset in 0x20..<0x30 { bytes[offset] = 0xff }
+        var point = CGPoint(x: 300_000, y: 300_000)
+        withUnsafeBytes(of: &point) { raw in
+            for (index, byte) in raw.enumerated() { bytes[0x20 + index] = byte }
+        }
         withUnsafeBytes(of: id) { raw in
             for (index, byte) in raw.enumerated() { bytes[0x3c + index] = byte }
         }
-
-        // 0x01 "window activated", 0x02 "window deactivated". A real click
-        // produces both, and apps watching only one still react.
-        for phase in [UInt8(0x01), UInt8(0x02)] {
-            bytes[0x08] = phase
-            _ = bytes.withUnsafeMutableBufferPointer { buffer in
-                SLPSPostEventRecordTo(&psn, buffer.baseAddress!)
-            }
+        bytes[0x08] = 0x01  // kCGEventLeftMouseDown
+        _ = bytes.withUnsafeMutableBufferPointer { buffer in
+            SLPSPostEventRecordTo(&psn, buffer.baseAddress!)
         }
         return true
     }

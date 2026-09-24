@@ -173,15 +173,42 @@ enum WindowEnumerator {
         let offSpace = WindowRegistry.shared.space(forWindow: window.id)
             .map { !SpaceMap.visibleSpaces().contains($0) } ?? false
 
-        guard !offSpace, let element = window.element else {
-            // Both calls are needed, in this order. `activate` switches Space
-            // but lands on whichever window the app last had main. The raise
-            // names the right window but does not switch Space. Raising first
-            // makes the app frontmost, which turns `activate` into a no-op and
-            // leaves you on the wrong Space.
+        if offSpace {
+            // The only sequence known to reach a window on another Space:
+            //
+            //   1. front the process *and* the window, by window id
+            //   2. make it key with a synthetic click aimed off its corner
+            //   3. raise it inside the app's own window stack, over AX
+            //
+            // Deliberately no `activate()`. It is advisory since macOS 14, it
+            // is a no-op for an app that is already frontmost, which is the
+            // failing case of two windows of one app on different Spaces, and
+            // when it does act it goes to the Space of the app's own front
+            // window rather than the one asked for.
+            //
+            // Steps 1 and 2 need only the window id, so they work for a window
+            // AX cannot describe. Step 3 needs an element, and a *stale* one
+            // answers `.success` while doing nothing, so its result is logged
+            // separately from the others rather than folded in.
+            if let element = window.element {
+                AXUIElementSetAttributeValue(element, kAXMinimizedAttribute as CFString,
+                                             kCFBooleanFalse)
+            }
+            let raised = WindowServer.raise(window: window.id)
+            let axRaise = window.element.map {
+                AXUIElementPerformAction($0, kAXRaiseAction as CFString).rawValue
+            }
+            Diagnostics.note("focus offSpace id=\(window.id) raised=\(raised) axRaise=\(axRaise.map(String.init) ?? "no element") \(window.appName) | \(window.title)")
+            WindowRegistry.shared.promote(window.id)
+            return
+        }
+
+        guard let element = window.element else {
+            // On this Space but AX never described it. `activate` brings the
+            // app forward, the raise names the window.
             app?.activate()
             let raised = WindowServer.raise(window: window.id)
-            Diagnostics.note("focus server id=\(window.id) raised=\(raised) offSpace=\(offSpace) \(window.appName) | \(window.title)")
+            Diagnostics.note("focus server id=\(window.id) raised=\(raised) onSpace \(window.appName) | \(window.title)")
             WindowRegistry.shared.promote(window.id)
             return
         }
