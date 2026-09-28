@@ -217,7 +217,13 @@ final class HUDPanel {
     private var panel: NSPanel?
     private let view = HUDView()
 
-    static let keyHint = "↑↓ move · → this Space · release ⌘ to switch · esc cancel"
+    /// Which modifier the footer tells you to release. Set from the trigger
+    /// that opened the cycle, because that is no longer always Cmd.
+    static var modifierHint = "\u{2318}"
+
+    static var keyHint: String {
+        "↑↓ move · → this Space · release \(modifierHint) to switch · esc cancel"
+    }
 
     /// How many rows the panel can fit on the active screen, whether or not it
     /// is on screen right now. `Switcher` pages by this.

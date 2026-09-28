@@ -1,11 +1,5 @@
 import AppKit
-
-enum SwitchMode {
-    /// Cmd+Tab: every window on the current Space, across all screens.
-    case allWindows
-    /// Cmd+`: windows of the app that was frontmost when cycling began.
-    case currentApp
-}
+import CmdTabConfig
 
 /// How long Cmd must be held before the list appears. A deliberate Cmd+Tab tap
 /// runs 120-200 ms, so this has to clear that or the panel flashes on every

@@ -1,5 +1,6 @@
 import AppKit
 import Carbon.HIToolbox
+import CmdTabConfig
 
 private let tapCallback: CGEventTapCallBack = { _, type, event, refcon in
     guard let refcon else { return Unmanaged.passUnretained(event) }
@@ -30,11 +31,21 @@ final class HotkeyTap {
     }
 
     private let switcher: Switcher
+    private let host: any WindowActions
     private var machPort: CFMachPort?
     private var source: CFRunLoopSource?
 
-    init(switcher: Switcher) {
+    /// What the config bound. Replaced wholesale on reload.
+    var bindings = Bindings()
+
+    /// The modifiers of the trigger that opened the current cycle. Releasing
+    /// any of them is what commits. That used to be hardcoded to Cmd, and is
+    /// now whatever the trigger names.
+    private var activeHold: Chord.Modifiers?
+
+    init(switcher: Switcher, host: any WindowActions) {
         self.switcher = switcher
+        self.host = host
     }
 
     @discardableResult
@@ -78,78 +89,117 @@ final class HotkeyTap {
             return .swallow
         }
 
-        let command = flags.contains(.maskCommand)
-        let shift = flags.contains(.maskShift)
+        let held = HotkeyTap.modifiers(flags)
+        let shift = held.contains(.shift)
 
         if type == .flagsChanged {
-            // Releasing Cmd is what commits the selection.
-            if switcher.isCycling && !command {
-                switcher.commit()
-            }
+            // Releasing the trigger's modifiers is what commits the selection.
+            if switcher.isCycling, !stillHeld(held) { endCycle() }
             return .pass
         }
 
         guard type == .keyDown || type == .keyUp else { return .pass }
 
-        // A key arriving without Cmd while cycling means the release that should
-        // have ended the cycle never got here. The system drops events for as
-        // long as it has the tap disabled. Commit what was selected and let the
-        // key through, rather than swallowing the keyboard until the next Cmd.
-        if switcher.isCycling && !command {
-            Diagnostics.note("missed Cmd release, recovering")
-            switcher.commit()
+        // A key arriving without the trigger held while cycling means the
+        // release that should have ended the cycle never got here. The system
+        // drops events for as long as it has the tap disabled. Commit what was
+        // selected and let the key through, rather than swallowing the keyboard
+        // until the next trigger.
+        if switcher.isCycling, !stillHeld(held) {
+            Diagnostics.note("missed trigger release, recovering")
+            endCycle()
             return .pass
         }
 
         if switcher.isCycling {
-            if type == .keyDown {
-                switch key {
-                case kVK_Escape, kVK_ANSI_Period:
-                    switcher.cancel()
-                case kVK_Return, kVK_ANSI_KeypadEnter:
-                    switcher.commit()
-                case kVK_RightArrow:
-                    switcher.toggleScope()
-                case kVK_DownArrow:
-                    switcher.step(1)
-                case kVK_UpArrow:
-                    switcher.step(-1)
-                case kVK_PageDown:
-                    switcher.step(switcher.pageSize, wrap: false)
-                case kVK_PageUp:
-                    switcher.step(-switcher.pageSize, wrap: false)
-                case kVK_Tab:
-                    switcher.step(shift ? -tabDirection : tabDirection)
-                case kVK_ANSI_Grave:
-                    switcher.step(shift ? tabDirection : -tabDirection)
-                default:
-                    break
-                }
-            }
+            if type == .keyDown { cycle(key: key, shift: shift) }
             // Swallow everything while the switcher owns the keyboard.
             return .swallow
         }
 
-        // Only plain Cmd (optionally with Shift, which reverses) starts a cycle.
-        // Leave Cmd+Ctrl+Tab / Cmd+Opt+Tab to whatever else is bound to them.
-        let disallowed: CGEventFlags = [.maskControl, .maskAlternate]
-        guard type == .keyDown, command, flags.isDisjoint(with: disallowed) else {
-            return .pass
+        guard type == .keyDown else { return .pass }
+
+        let chord = Chord(keyCode: UInt16(key), modifiers: held)
+
+        // Shift is not part of a switcher trigger. It reverses direction, so
+        // try the chord as typed, then again without Shift.
+        if let mode = bindings.switchers[chord] {
+            begin(mode, trigger: chord, reversed: false)
+            return .swallow
+        }
+        if shift {
+            let unshifted = chord.removing(.shift)
+            if let mode = bindings.switchers[unshifted] {
+                begin(mode, trigger: unshifted, reversed: true)
+                return .swallow
+            }
         }
 
+        // Any one-shot binding: tiling, a desktop switch, shell, AppleScript.
+        // Swallowed so the chord does not reach the focused app as well. A
+        // chord the config did not bind falls through untouched.
+        if let command = bindings.locals[chord] {
+            command.run(on: host)
+            return .swallow
+        }
+        return .pass
+    }
+
+    private func begin(_ mode: SwitchMode, trigger: Chord, reversed: Bool) {
+        activeHold = trigger.modifiers
+        HUDPanel.modifierHint = trigger.modifierDisplay
+        switcher.start(mode, reversed: reversed)
+    }
+
+    private func endCycle() {
+        switcher.commit()
+        activeHold = nil
+    }
+
+    /// Whether every modifier the trigger named is still down.
+    private func stillHeld(_ held: Chord.Modifiers) -> Bool {
+        guard let activeHold else { return false }
+        return held.isSuperset(of: activeHold)
+    }
+
+    private func cycle(key: Int, shift: Bool) {
         switch key {
-        case kVK_Tab:
-            switcher.start(.allWindows, reversed: shift)
-            return .swallow
-        case kVK_ANSI_Grave:
-            switcher.start(.currentApp, reversed: shift)
-            return .swallow
+        case kVK_Escape, kVK_ANSI_Period:
+            switcher.cancel()
+            activeHold = nil
+        case kVK_Return, kVK_ANSI_KeypadEnter:
+            endCycle()
+        case kVK_RightArrow:
+            switcher.toggleScope()
+        case kVK_DownArrow:
+            switcher.step(1)
+        case kVK_UpArrow:
+            switcher.step(-1)
+        case kVK_PageDown:
+            switcher.step(switcher.pageSize, wrap: false)
+        case kVK_PageUp:
+            switcher.step(-switcher.pageSize, wrap: false)
         default:
-            return .pass
+            // The trigger that opened this cycle steps forward. The other one
+            // steps back. That is what makes Cmd+` walk the all-windows list
+            // in reverse, and it now follows from the bindings rather than
+            // from a hardcoded pair of key codes.
+            guard let mode = bindings.switchers.first(where: { $0.key.keyCode == UInt16(key) })?.value
+            else { break }
+            let direction = mode == switcher.mode ? 1 : -1
+            switcher.step(shift ? -direction : direction)
         }
     }
 
-    /// Tab moves forward in the all-windows cycle and backward in the
-    /// single-app cycle, mirroring which key opened it. Shift reverses both.
-    private var tabDirection: Int { switcher.mode == .currentApp ? -1 : 1 }
+    /// Only the modifiers a tap can match on. `fn` is absent by construction:
+    /// arrow and function keys set it implicitly, so matching on it would be
+    /// wrong either way. See `Chord.Modifiers.tapMatchable`.
+    private static func modifiers(_ flags: CGEventFlags) -> Chord.Modifiers {
+        var m = Chord.Modifiers()
+        if flags.contains(.maskShift) { m.insert(.shift) }
+        if flags.contains(.maskControl) { m.insert(.control) }
+        if flags.contains(.maskAlternate) { m.insert(.option) }
+        if flags.contains(.maskCommand) { m.insert(.command) }
+        return m
+    }
 }
