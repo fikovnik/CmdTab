@@ -5,8 +5,17 @@ let package = Package(
     name: "CmdTab",
     platforms: [.macOS(.v13)],
     targets: [
+        // Chord parsing, the config file and the action table. Deliberately
+        // free of AppKit and of private SPI, so the parts most worth testing
+        // can be tested without a running app or a live WindowServer.
+        .target(
+            name: "CmdTabConfig",
+            path: "Sources/CmdTabConfig",
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
         .executableTarget(
             name: "CmdTab",
+            dependencies: ["CmdTabConfig"],
             path: "Sources/CmdTab",
             // Everything in this app is main-thread-only by construction (event
             // tap callback, AX, AppKit). Swift 6 mode makes the compiler hold
@@ -20,6 +29,12 @@ let package = Package(
             ],
             linkerSettings: [.unsafeFlags(["-F", "/System/Library/PrivateFrameworks",
                                            "-framework", "SkyLight"])]
-        )
+        ),
+        .testTarget(
+            name: "CmdTabConfigTests",
+            dependencies: ["CmdTabConfig"],
+            path: "Tests/CmdTabConfigTests",
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
     ]
 )

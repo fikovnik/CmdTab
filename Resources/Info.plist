@@ -18,6 +18,8 @@
 	<string>13.0</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>CmdTab runs the AppleScript you bind to a keyboard shortcut in its configuration file.</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 </dict>

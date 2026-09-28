@@ -14,7 +14,7 @@ IDENTITY ?= CmdTab Self-Signed
 # Space-change auto-trace. See Diagnostics in the README.
 CONFIG ?= release
 
-.PHONY: all cert build app install uninstall run stop reset-permissions clean
+.PHONY: all cert build test app install uninstall run stop reset-permissions clean
 
 all: app
 
@@ -25,6 +25,16 @@ endif
 
 build:
 	swift build -c $(CONFIG)
+
+# The Command Line Tools toolchain ships neither XCTest nor a loadable
+# swift-testing macro plugin, so point at Xcode's toolchain when one is
+# installed. DEVELOPER_DIR does that without needing sudo xcode-select.
+test:
+	@if [ -d /Applications/Xcode.app ]; then \
+		DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test; \
+	else \
+		swift test; \
+	fi
 
 app: cert build
 	rm -rf $(APP)
