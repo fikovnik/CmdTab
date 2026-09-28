@@ -7,7 +7,7 @@ typealias CGSSpaceID = UInt64
 private let allSpacesMask: Int32 = 7
 
 @_silgen_name("CGSMainConnectionID")
-private func CGSMainConnectionID() -> CGSConnectionID
+func CGSMainConnectionID() -> CGSConnectionID
 
 @_silgen_name("CGSCopyManagedDisplaySpaces")
 private func CGSCopyManagedDisplaySpaces(_ cid: CGSConnectionID) -> Unmanaged<CFArray>?
@@ -27,7 +27,19 @@ private func CGSCopySpacesForWindows(_ cid: CGSConnectionID,
 /// Space ids this class produces.
 @MainActor
 final class SpaceMap {
+    /// One physical display and the desktops on it, in left-to-right order.
+    /// Switching Spaces needs both halves: the identifier names the display,
+    /// and desktop numbers are per-display because "Displays have separate
+    /// Spaces" is the default.
+    struct Display {
+        let identifier: String
+        /// Normal desktops only, because a full-screen Space has no number.
+        let desktops: [CGSSpaceID]
+        let currentSpace: CGSSpaceID?
+    }
+
     private let connection = CGSMainConnectionID()
+    private(set) var displays: [Display] = []
     private var labels: [CGSSpaceID: String] = [:]
     private var numbers: [CGSSpaceID: Int] = [:]
     private var ranks: [CGSSpaceID: Int] = [:]
@@ -45,6 +57,7 @@ final class SpaceMap {
         for (displayIndex, display) in displays.enumerated() {
             guard let spaces = display["Spaces"] as? [[String: Any]] else { continue }
             var desktopNumber = 0
+            var desktops: [CGSSpaceID] = []
 
             for space in spaces {
                 guard let id = (space["ManagedSpaceID"] as? NSNumber)?.uint64Value else { continue }
@@ -54,6 +67,7 @@ final class SpaceMap {
                 if (space["type"] as? NSNumber)?.intValue ?? 0 == 0 {
                     desktopNumber += 1
                     numbers[id] = desktopNumber
+                    desktops.append(id)
                     label = "Desktop \(desktopNumber)"
                 } else {
                     label = "Full Screen"
@@ -64,6 +78,14 @@ final class SpaceMap {
                 ranks[id] = rank
                 ordered.append(id)
                 rank += 1
+            }
+
+            if let identifier = display["Display Identifier"] as? String {
+                let current = (display["Current Space"] as? [String: Any])
+                    .flatMap { ($0["ManagedSpaceID"] as? NSNumber)?.uint64Value }
+                self.displays.append(Display(identifier: identifier,
+                                             desktops: desktops,
+                                             currentSpace: current))
             }
         }
     }
@@ -88,6 +110,13 @@ final class SpaceMap {
             result.insert(id)
         }
         return result
+    }
+
+    /// The display whose current Space is the active one, i.e. the display the
+    /// keyboard is talking to. Desktop numbers are relative to it.
+    func activeDisplay(activeSpace: CGSSpaceID) -> Display? {
+        displays.first { $0.currentSpace == activeSpace }
+            ?? displays.first { $0.desktops.contains(activeSpace) }
     }
 
     func space(forWindow window: CGWindowID) -> CGSSpaceID? {
