@@ -148,7 +148,7 @@ change, at the cost of a full Accessibility walk each time. The log is
 
 ## Known limitations
 
-There are bunch of issues:
+This is an incomplete list of issues:
 
 - **Never-visible windows have no preview**: a frame can only be kept if the
 window was drawn at least once while CmdTab was running. Chrome's
@@ -168,28 +168,18 @@ holding a chord through its own event tap, can take a chord before CmdTab sees
 it, and Karabiner-Elements remaps lower still, below every tap. CmdTab cannot
 detect either. First thing to suspect when a binding does nothing: try it on a
 chord nothing else claims.
-- **`fn` cannot be bound**: arrow and function keys set it implicitly, so an
-event tap cannot tell a real `fn` from that. Chords naming it are refused.
 - **Apps that resist resizing**: AX position and size are requests. A window
 with a minimum size, or one that resizes in whole character cells like a
 terminal, lands near the target rather than on it. Some apps ignore the write
 altogether.
-- **CmdTab never touches System Settings**: tiling and desktop switching are
-implemented directly, so nothing appears under Keyboard Shortcuts and your own
-shortcuts there are left alone. The two can conflict if you bind the same chord
-in both places.
 - **Hung apps**: the AX messaging timeout is 100 ms per app, so a beachballing
 app can add that much latency to opening the switcher.
 - **Full-screen apps**: a full-screen window is its own Space, so `→` there
 narrows the list to that one window.
-- **Cost**: the Accessibility resolve of the active Space dominates, and both
-scopes pay it. On a Space holding 28 windows, `--report` measures 166-203 ms
-for the narrowed scope, then 23-77 ms for the widened one, which reuses the AX
-connections the first just warmed. On a Space of 8, the first figure is 36-46
-ms. The registry's full Accessibility walk runs coalesced off notifications,
-never on a keypress.
 
 ## Related projects
 
 - [alt-tab-macos](https://github.com/lwouis/alt-tab-macos) - a feature-full
-  window switcher which does way more than this one ever will.
+  window switcher which does way more and better than this one ever will.
+- [yabai](https://github.com/koekeishiya/yabai) - a full tiling window manager for macOS.
+- [ShiftIt](https://github.com/fikovnik/ShiftIt) - my previous *tiling* window manager attempt.
