@@ -194,10 +194,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let starterConfig = """
     {
       "keys": {
-        "shift-ctrl-alt-cmd-left":  "left-half",
-        "shift-ctrl-alt-cmd-right": "right-half",
-        "shift-ctrl-alt-cmd-up":    "top-half",
-        "shift-ctrl-alt-cmd-down":  "bottom-half",
+        "shift-ctrl-alt-cmd-left":  "tile:left",
+        "shift-ctrl-alt-cmd-right": "tile:right",
+        "shift-ctrl-alt-cmd-up":    "tile:top",
+        "shift-ctrl-alt-cmd-down":  "tile:bottom",
 
         "shift-alt-cmd-f": "toggle-fullscreen",
         "shift-alt-cmd-m": "toggle-maximize",

@@ -41,59 +41,88 @@ private func binding(_ config: Config, _ spec: String) -> Binding? {
 }
 
 final class ActionTests: XCTestCase {
-    func testEveryBuiltinNameIsAccountedFor() throws {
-        // 4 halves + 2 toggles + 16 desktops + 2 space steps.
-        XCTAssertEqual(Config.builtins.count, 24)
-        for name in ["left-half", "right-half", "top-half", "bottom-half",
-                     "toggle-fullscreen", "toggle-maximize",
-                     "desktop-1", "desktop-16", "space-previous", "space-next"] {
+    func testOnlyTheTogglesAreBareNames() throws {
+        XCTAssertEqual(Config.builtins.count, 2)
+        for name in ["toggle-fullscreen", "toggle-maximize",
+                     "tile:left", "tile:right", "tile:top", "tile:bottom",
+                     "switch-desktop:1", "switch-desktop:16",
+                     "switch-desktop:previous", "switch-desktop:next"] {
             XCTAssertNoThrow(try Config.action(for: name), name)
         }
     }
 
     func testEachPrefixProducesItsOwnClass() throws {
-        XCTAssertTrue(try Config.action(for: "left-half") is TileAction)
+        XCTAssertTrue(try Config.action(for: "tile:left") is TileAction)
         XCTAssertTrue(try Config.action(for: "toggle-maximize") is ToggleAction)
-        XCTAssertTrue(try Config.action(for: "desktop-3") is SpaceAction)
+        XCTAssertTrue(try Config.action(for: "switch-desktop:3") is SwitchDesktopAction)
         XCTAssertTrue(try Config.action(for: "shell:open -a Finder") is ShellAction)
         XCTAssertTrue(try Config.action(for: "applescript:beep") is AppleScriptAction)
     }
 
     func testActionsCarryTheRightPayload() throws {
-        XCTAssertEqual((try Config.action(for: "bottom-half") as? TileAction)?.edge, .bottom)
+        XCTAssertEqual((try Config.action(for: "tile:bottom") as? TileAction)?.edge, .bottom)
         XCTAssertEqual((try Config.action(for: "toggle-fullscreen") as? ToggleAction)?.kind,
                        .fullscreen)
-        XCTAssertEqual((try Config.action(for: "desktop-7") as? SpaceAction)?.target,
+        XCTAssertEqual((try Config.action(for: "switch-desktop:7") as? SwitchDesktopAction)?.target,
                        .desktop(7))
-        XCTAssertEqual((try Config.action(for: "space-previous") as? SpaceAction)?.target,
-                       .step(-1))
-        XCTAssertEqual((try Config.action(for: "space-next") as? SpaceAction)?.target, .step(1))
+        XCTAssertEqual((try Config.action(for: "switch-desktop:previous")
+                            as? SwitchDesktopAction)?.target, .step(-1))
+        XCTAssertEqual((try Config.action(for: "switch-desktop:next")
+                            as? SwitchDesktopAction)?.target, .step(1))
     }
 
-    func testBuiltinsAreFreshInstancesNotSharedOnes() throws {
-        let a = try Config.action(for: "left-half")
-        let b = try Config.action(for: "left-half")
-        XCTAssertFalse(a === b)
+    /// The name is what a duplicate-chord error prints, so it has to round-trip
+    /// back to the spelling the config used.
+    func testNamesRoundTripToTheConfigSpelling() throws {
+        for spec in ["tile:left", "tile:bottom", "toggle-maximize",
+                     "switch-desktop:9", "switch-desktop:previous",
+                     "switch-desktop:next"] {
+            XCTAssertEqual(try Config.action(for: spec).name, spec)
+        }
+    }
+
+    func testActionsAreFreshInstancesNotSharedOnes() throws {
+        for spec in ["toggle-maximize", "tile:left", "switch-desktop:2"] {
+            let a = try Config.action(for: spec)
+            let b = try Config.action(for: spec)
+            XCTAssertFalse(a === b, spec)
+        }
     }
 
     func testSpaceAfterThePrefixIsTolerated() throws {
-        let action = try Config.action(for: "shell: open -a Finder")
-        XCTAssertEqual((action as? ShellAction)?.command, "open -a Finder")
+        XCTAssertEqual((try Config.action(for: "shell: open -a Finder") as? ShellAction)?.command,
+                       "open -a Finder")
+        XCTAssertEqual((try Config.action(for: "tile: left") as? TileAction)?.edge, .left)
     }
 
     func testUnknownAndEmptySpecsAreErrors() {
-        assertThrows(Config.ActionError.unknownAction("tile-left-half")) {
-            _ = try Config.action(for: "tile-left-half")   // the old, removed name
-        }
-        assertThrows(Config.ActionError.unknownAction("desktop-0")) {
-            _ = try Config.action(for: "desktop-0")
-        }
-        assertThrows(Config.ActionError.unknownAction("desktop-17")) {
-            _ = try Config.action(for: "desktop-17")
+        for spec in ["left-half", "desktop-1", "space-previous", "tile-left"] {
+            assertThrows(Config.ActionError.unknownAction(spec)) {
+                _ = try Config.action(for: spec)   // the old, removed names
+            }
         }
         assertThrows(Config.ActionError.emptyCommand("shell")) {
             _ = try Config.action(for: "shell:")
         }
+    }
+
+    /// A known action with a parameter that names nothing reports what it
+    /// wanted, rather than the bare "unknown action" a typo used to get.
+    func testBadParametersSayWhatWasExpected() {
+        for value in ["sideways", "", "Left"] {
+            assertThrows(Config.ActionError.badParameter("tile", value,
+                                                         "left/right/top/bottom")) {
+                _ = try Config.action(for: "tile:\(value)")
+            }
+        }
+        for value in ["0", "17", "two", ""] {
+            assertThrows(Config.ActionError.badParameter("switch-desktop", value,
+                                                         "1-16, previous or next")) {
+                _ = try Config.action(for: "switch-desktop:\(value)")
+            }
+        }
+        XCTAssertEqual("\(Config.ActionError.badParameter("tile", "sideways", "left/right/top/bottom"))",
+                       "tile: expected left/right/top/bottom, got \"sideways\"")
     }
 
     func testBindRoutesEveryActionThroughTheSink() throws {
@@ -102,7 +131,7 @@ final class ActionTests: XCTestCase {
 
         TileAction(edge: .left).bind(chord, into: sink)
         ToggleAction(kind: .maximize).bind(chord, into: sink)
-        SpaceAction(target: .desktop(2), name: "desktop-2").bind(chord, into: sink)
+        SwitchDesktopAction(target: .desktop(2)).bind(chord, into: sink)
         ShellAction(command: "ls").bind(chord, into: sink)
         AppleScriptAction(source: "beep").bind(chord, into: sink)
         SwitcherAction(mode: .currentApp).bind(chord, into: sink)
@@ -120,8 +149,8 @@ final class ActionTests: XCTestCase {
         TileAction(edge: .right).run(on: host)
         ToggleAction(kind: .fullscreen).run(on: host)
         ToggleAction(kind: .maximize).run(on: host)
-        SpaceAction(target: .desktop(4), name: "desktop-4").run(on: host)
-        SpaceAction(target: .step(-1), name: "space-previous").run(on: host)
+        SwitchDesktopAction(target: .desktop(4)).run(on: host)
+        SwitchDesktopAction(target: .step(-1)).run(on: host)
 
         XCTAssertEqual(host.tiled, [.top, .right])
         XCTAssertEqual(host.fullScreenToggles, 1)
@@ -158,8 +187,8 @@ final class ConfigFileTests: XCTestCase {
         let config = parse(#"""
         {
           "keys": {
-            "ctrl-alt-cmd-1": "desktop-1",
-            "shift-ctrl-alt-cmd-left": "left-half",
+            "ctrl-alt-cmd-1": "switch-desktop:1",
+            "shift-ctrl-alt-cmd-left": "tile:left",
             "ctrl-alt-cmd-e": "shell:open -a Finder ~",
             "ctrl-alt-cmd-s": "applescript:tell app \"Finder\" to activate"
           },
@@ -170,7 +199,7 @@ final class ConfigFileTests: XCTestCase {
         XCTAssertEqual(config.errors, [])
         XCTAssertEqual(config.menuIcon, .literal("\u{21E5}"))
 
-        XCTAssertEqual((binding(config, "ctrl-alt-cmd-1")?.action as? SpaceAction)?.target,
+        XCTAssertEqual((binding(config, "ctrl-alt-cmd-1")?.action as? SwitchDesktopAction)?.target,
                        .desktop(1))
         XCTAssertEqual((binding(config, "shift-ctrl-alt-cmd-left")?.action as? TileAction)?.edge,
                        .left)
@@ -202,8 +231,8 @@ final class ConfigFileTests: XCTestCase {
         let config = parse(#"""
         {
           "keys": {
-            "ctrl-alt-cmd-h": "left-half",
-            "hyper-j": "right-half",
+            "ctrl-alt-cmd-h": "tile:left",
+            "hyper-j": "tile:right",
             "ctrl-alt-cmd-k": "tile-sideways",
             "ctrl-alt-cmd-l": 42
           }
@@ -240,7 +269,7 @@ final class ConfigFileTests: XCTestCase {
 
     func testTwoNamesForOneChordIsAConflictNotACoinToss() {
         let config = parse(#"""
-        { "keys": { "ctrl-alt-cmd-h": "left-half", "cmd-alt-ctrl-h": "toggle-maximize" } }
+        { "keys": { "ctrl-alt-cmd-h": "tile:left", "cmd-alt-ctrl-h": "toggle-maximize" } }
         """#)
         XCTAssertEqual(config.errors.count, 1, "\(config.errors)")
         XCTAssertTrue(config.errors[0].contains("already bound to"))

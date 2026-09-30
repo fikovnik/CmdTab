@@ -51,10 +51,12 @@ public protocol Action: AnyObject, Sendable {
     func bind(_ chord: Chord, into sink: any BindingSink)
 }
 
-/// `left-half` and friends. Repeated presses cycle the fraction.
+/// `tile:left` and friends. Repeated presses cycle the fraction, so the
+/// direction is the whole parameter: how much of the screen it takes is a
+/// function of how many times you have pressed it, not of the config.
 public final class TileAction: Action, LocalCommand {
     public let edge: WindowEdge
-    public var name: String { "\(edge.rawValue)-half" }
+    public var name: String { "tile:\(edge.rawValue)" }
 
     public init(edge: WindowEdge) { self.edge = edge }
 
@@ -87,21 +89,24 @@ public final class ToggleAction: Action, LocalCommand {
     }
 }
 
-/// `desktop-N`, `space-previous`, `space-next`.
-public final class SpaceAction: Action, LocalCommand {
+/// `switch-desktop:N`, `switch-desktop:previous`, `switch-desktop:next`.
+public final class SwitchDesktopAction: Action, LocalCommand {
     public enum Target: Sendable, Equatable {
         /// 1-based, within the desktops of whichever display has focus.
         case desktop(Int)
+        /// One desktop along, negative for left. Clamped, not wrapped.
         case step(Int)
     }
 
     public let target: Target
-    public let name: String
-
-    public init(target: Target, name: String) {
-        self.target = target
-        self.name = name
+    public var name: String {
+        switch target {
+        case .desktop(let n): "switch-desktop:\(n)"
+        case .step(let offset): "switch-desktop:\(offset < 0 ? "previous" : "next")"
+        }
     }
+
+    public init(target: Target) { self.target = target }
 
     public func bind(_ chord: Chord, into sink: any BindingSink) {
         sink.registerLocal(chord: chord, command: self)

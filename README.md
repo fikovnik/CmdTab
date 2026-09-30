@@ -21,15 +21,15 @@ there was one.
 ```json
 {
   "keys": {
-    "shift-ctrl-alt-cmd-left":  "left-half",
-    "shift-ctrl-alt-cmd-right": "right-half",
-    "shift-ctrl-alt-cmd-up":    "top-half",
-    "shift-ctrl-alt-cmd-down":  "bottom-half",
+    "shift-ctrl-alt-cmd-left":  "tile:left",
+    "shift-ctrl-alt-cmd-right": "tile:right",
+    "shift-ctrl-alt-cmd-up":    "tile:top",
+    "shift-ctrl-alt-cmd-down":  "tile:bottom",
 
     "shift-alt-cmd-f": "toggle-fullscreen",
     "shift-alt-cmd-m": "toggle-maximize",
 
-    "ctrl-alt-cmd-1": "desktop-1",
+    "ctrl-alt-cmd-1": "switch-desktop:1",
     "shift-ctrl-alt-cmd-e": "shell:open -a Finder ~",
     "shift-ctrl-alt-cmd-s": "applescript:display notification \"hello\""
   },
@@ -58,17 +58,21 @@ windows.
 
 | Action | Does |
 |---|---|
-| `left-half`, `right-half`, `top-half`, `bottom-half` | Occupy that half of the current display |
+| `tile:left`, `tile:right`, `tile:top`, `tile:bottom` | Occupy that side of the current display |
 | `toggle-fullscreen` | Native full screen, and back |
 | `toggle-maximize` | Fill the visible frame, and back to the previous frame |
-| `desktop-1` … `desktop-16` | Switch the focused display to its Nth desktop |
-| `space-previous`, `space-next` | One desktop left/right on the focused display |
+| `switch-desktop:1` … `switch-desktop:16` | Switch the focused display to its Nth desktop |
+| `switch-desktop:previous`, `switch-desktop:next` | One desktop left/right on the focused display |
 | `shell:<command>` | Run through `/bin/sh -c` |
 | `applescript:<source>` | Run through `osascript -e` |
 
-Pressing the same half repeatedly **cycles the size**: a half, then two thirds,
-then one third, then back to a half. Pressing a *different* edge snaps to a half
-of that edge instead of continuing the cycle. "Already there" is judged from
+An action is either a bare name or `<name>:<parameter>`. A parameter that names
+nothing costs that one binding and says what it expected, so `tile:sideways`
+reports `expected left/right/top/bottom`.
+
+Pressing the same direction repeatedly **cycles the size**: a half, then two
+thirds, then one third, then back to a half. Pressing a *different* direction
+snaps to a half of that side instead of continuing the cycle. "Already there" is judged from
 where the window actually is, not from remembered state, so it survives a
 relaunch and a manual resize, with enough tolerance that a terminal snapping to
 whole character cells still counts.
@@ -79,8 +83,8 @@ stay reachable, and remembers the frame to put the window back to.
 toggling again. Tiling a full-screen window takes it out of full screen first.
 
 Desktop switching is per-display, because "Displays have separate Spaces" is the
-macOS default, so `desktop-2` means the second desktop of whichever display has
-focus, the same thing the system's own shortcuts mean. It switches without the
+macOS default, so `switch-desktop:2` means the second desktop of whichever
+display has focus, the same thing the system's own shortcuts mean. It switches without the
 sliding animation.
 
 `shell:` and `applescript:` are fire and forget, spawned off the event tap so a

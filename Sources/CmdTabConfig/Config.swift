@@ -179,6 +179,10 @@ public struct Config: Sendable {
         return object
     }
 
+    /// An action is either a bare name or `<name>:<parameter>`. The
+    /// parameterized ones are spelled that way even where the parameter set is
+    /// small and closed, so that adding a direction or a desktop is a value
+    /// rather than another entry in a table of names.
     static func action(for spec: String) throws -> any Action {
         if let command = spec.dropPrefix("shell:") {
             guard !command.isEmpty else { throw ActionError.emptyCommand("shell") }
@@ -188,42 +192,56 @@ public struct Config: Sendable {
             guard !source.isEmpty else { throw ActionError.emptyCommand("applescript") }
             return AppleScriptAction(source: source)
         }
+        if let direction = spec.dropPrefix("tile:") {
+            guard let edge = WindowEdge(rawValue: direction) else {
+                throw ActionError.badParameter(
+                    "tile", direction,
+                    WindowEdge.allCases.map(\.rawValue).joined(separator: "/"))
+            }
+            return TileAction(edge: edge)
+        }
+        if let target = spec.dropPrefix("switch-desktop:") {
+            return SwitchDesktopAction(target: try desktop(target))
+        }
         if let action = builtins[spec] { return action() }
         throw ActionError.unknownAction(spec)
     }
 
-    /// Everything CmdTab implements itself. Each value is a factory rather than
-    /// a shared instance, so two chords bound to the same action do not share
-    /// one object.
-    static let builtins: [String: @Sendable () -> any Action] = {
-        var t: [String: @Sendable () -> any Action] = [:]
-
-        for edge in WindowEdge.allCases {
-            t["\(edge.rawValue)-half"] = { TileAction(edge: edge) }
+    private static func desktop(_ text: String) throws -> SwitchDesktopAction.Target {
+        switch text {
+        case "previous": return .step(-1)
+        case "next": return .step(1)
+        default: break
         }
-        t["toggle-fullscreen"] = { ToggleAction(kind: .fullscreen) }
-        t["toggle-maximize"] = { ToggleAction(kind: .maximize) }
-
         // macOS allows 16 Spaces per display. A number past however many you
         // actually have is accepted and does nothing, same as the system's own
         // shortcuts.
-        for n in 1...16 {
-            t["desktop-\(n)"] = { SpaceAction(target: .desktop(n), name: "desktop-\(n)") }
+        guard let n = Int(text), (1...16).contains(n) else {
+            throw ActionError.badParameter("switch-desktop", text, "1-16, previous or next")
         }
-        t["space-previous"] = { SpaceAction(target: .step(-1), name: "space-previous") }
-        t["space-next"] = { SpaceAction(target: .step(1), name: "space-next") }
+        return .desktop(n)
+    }
 
-        return t
-    }()
+    /// The actions that take no parameter. Each value is a factory rather than
+    /// a shared instance, so two chords bound to the same action do not share
+    /// one object.
+    static let builtins: [String: @Sendable () -> any Action] = [
+        "toggle-fullscreen": { ToggleAction(kind: .fullscreen) },
+        "toggle-maximize": { ToggleAction(kind: .maximize) },
+    ]
 
     enum ActionError: Error, Equatable, CustomStringConvertible {
         case unknownAction(String)
         case emptyCommand(String)
+        /// A known action whose parameter does not name anything.
+        case badParameter(String, String, String)
 
         var description: String {
             switch self {
             case .unknownAction(let s): "unknown action \"\(s)\""
             case .emptyCommand(let p): "\(p): has no command"
+            case .badParameter(let action, let value, let expected):
+                "\(action): expected \(expected), got \"\(value)\""
             }
         }
     }
