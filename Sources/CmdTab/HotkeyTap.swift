@@ -2,6 +2,16 @@ import AppKit
 import Carbon.HIToolbox
 import CmdTabConfig
 
+#if DIAGNOSTICS
+/// Milliseconds per tick of `mach_absolute_time`, which is the clock
+/// `CGEvent.timestamp` is stamped from.
+private let millisecondsPerTick: Double = {
+    var info = mach_timebase_info_data_t()
+    mach_timebase_info(&info)
+    return Double(info.numer) / Double(info.denom) / 1_000_000
+}()
+#endif
+
 private let tapCallback: CGEventTapCallBack = { _, type, event, refcon in
     guard let refcon else { return Unmanaged.passUnretained(event) }
     let tap = Unmanaged<HotkeyTap>.fromOpaque(refcon).takeUnretainedValue()
@@ -11,11 +21,25 @@ private let tapCallback: CGEventTapCallBack = { _, type, event, refcon in
     // side of the boundary is what lets the hop be checked rather than excused.
     let flags = event.flags
     let key = Int(event.getIntegerValueField(.keyboardEventKeycode))
+    #if DIAGNOSTICS
+    // How long this event sat in the queue before the main thread got to it.
+    // The tap, the reveal timer and the window scan all share that thread, so a
+    // late event is also a HUD that could not have appeared on time.
+    let lateness = Double(mach_absolute_time() &- event.timestamp) * millisecondsPerTick
+    #endif
 
     // `start` installs the run loop source on the main run loop, so this
     // callback is always delivered on the main thread.
     var verdict = HotkeyTap.Verdict.pass
-    MainActor.assumeIsolated { verdict = tap.handle(type: type, flags: flags, key: key) }
+    MainActor.assumeIsolated {
+        #if DIAGNOSTICS
+        if lateness > 50 {
+            Diagnostics.note(String(format: "event type=%d key=%d delivered %.0f ms late",
+                                    type.rawValue, key, lateness))
+        }
+        #endif
+        verdict = tap.handle(type: type, flags: flags, key: key)
+    }
 
     return verdict == .swallow ? nil : Unmanaged.passUnretained(event)
 }

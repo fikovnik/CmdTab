@@ -4,12 +4,24 @@ import AppKit
 enum Diagnostics {
     /// Rolling log of switcher activity, so a misfire can be read back after
     /// the fact instead of reproduced on demand.
+    ///
+    /// Only `report` and `trace` ever read it, and both are debug-only, so in a
+    /// release build the whole thing is dead weight. Hence the flag below.
     private static var events: [String] = []
 
-    static func note(_ text: String) {
+    /// One AX failure burst is a dozen lines at 100 ms apart, so a buffer that
+    /// only just holds one evicts whatever it was you wanted to see around it.
+    private static let capacity = 300
+
+    /// `@autoclosure` so a release build does not even build the string: every
+    /// call site interpolates, and the AX failure path runs hundreds of times.
+    static func note(_ text: @autoclosure () -> String) {
+        #if DIAGNOSTICS
         let now = Date().timeIntervalSince1970
-        events.append(String(format: "%9.3f  %@", now.truncatingRemainder(dividingBy: 100_000), text))
-        if events.count > 80 { events.removeFirst(events.count - 80) }
+        events.append(String(format: "%9.3f  %@",
+                             now.truncatingRemainder(dividingBy: 100_000), text()))
+        if events.count > capacity { events.removeFirst(events.count - capacity) }
+        #endif
     }
 
     static let traceURL = FileManager.default.homeDirectoryForCurrentUser

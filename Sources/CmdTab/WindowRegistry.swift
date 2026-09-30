@@ -170,12 +170,19 @@ final class WindowRegistry {
     /// the active Space now are the ones that become un-capturable once we
     /// leave it.
     func refresh() {
+        let clock = Date()
         evictClosed(live: Set(WindowEnumerator.liveWindowOwners().keys))
         for window in WindowEnumerator.axWindowsOfAllApps() {
             known[window.id] = window
         }
+        let walk = Date().timeIntervalSince(clock) * 1000
         AXWatcher.sync()
         WindowPreview.shared.warm()
+        // This runs on the main thread, which is also the thread that services
+        // the event tap and fires the reveal timer, so its cost is how long a
+        // keypress can go unanswered.
+        Diagnostics.note(String(format: "refresh: ax walk %.0f ms, total %.0f ms",
+                                walk, Date().timeIntervalSince(clock) * 1000))
     }
 
     /// Activating a window fires an activation notification, and a refresh walks

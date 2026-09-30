@@ -154,6 +154,9 @@ final class Switcher {
         guard var session else { return }
         session.wantsHUD = true
         self.session = session
+        // Whether the deferred scan has landed by now is the whole question
+        // when the panel fails to appear: "nil" means it has not.
+        Diagnostics.note("reveal timer: windows=\(session.windows?.count.description ?? "nil")")
         showHUD()
     }
 
