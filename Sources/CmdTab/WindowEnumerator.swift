@@ -182,8 +182,8 @@ enum WindowEnumerator {
         //
         // An unknown Space falls back to the element test, so this can only
         // move a window onto the route it is proven to need.
-        let space = WindowRegistry.shared.space(forWindow: window.id)
-        let offSpace = space.map { !SpaceMap.visibleSpaces().contains($0) } ?? false
+        let offSpace = WindowRegistry.shared.space(forWindow: window.id)
+            .map { !SpaceMap.visibleSpaces().contains($0) } ?? false
 
         if offSpace {
             // The only sequence known to reach a window on another Space:
@@ -198,20 +198,13 @@ enum WindowEnumerator {
             // when it does act it goes to the Space of the app's own front
             // window rather than the one asked for.
             //
-            // Step 3 is the one that moves Spaces. Steps 1 and 2 need only the
-            // window id, but alone they never left the current Space: 0 of 9
-            // tries in one trace, against every try with an element. A window
-            // AX has not described since launch, anything on a Space not yet
-            // visited, has no element, so its Space is switched to directly.
-            //
-            // Step 3 needs an element, and a *stale* one answers `.success`
-            // while doing nothing, so its result is logged separately from the
-            // others rather than folded in.
+            // Steps 1 and 2 need only the window id, so they work for a window
+            // AX cannot describe. Step 3 needs an element, and a *stale* one
+            // answers `.success` while doing nothing, so its result is logged
+            // separately from the others rather than folded in.
             if let element = window.element {
                 AXUIElementSetAttributeValue(element, kAXMinimizedAttribute as CFString,
                                              kCFBooleanFalse)
-            } else if let space {
-                SpaceSwitcher.show(space)
             }
             let raised = WindowServer.raise(window: window.id)
             let axRaise = window.element.map {
