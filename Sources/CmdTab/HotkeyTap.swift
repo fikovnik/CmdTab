@@ -25,7 +25,12 @@ private let tapCallback: CGEventTapCallBack = { _, type, event, refcon in
     // How long this event sat in the queue before the main thread got to it.
     // The tap, the reveal timer and the window scan all share that thread, so a
     // late event is also a HUD that could not have appeared on time.
-    let lateness = Double(mach_absolute_time() &- event.timestamp) * millisecondsPerTick
+    //
+    // Signed, and floored: a timestamp can read a few ticks *ahead* of
+    // `mach_absolute_time`, which an unsigned subtraction turns into 2^64 ticks
+    // of apparent lateness.
+    let ticks = Int64(bitPattern: mach_absolute_time() &- event.timestamp)
+    let lateness = ticks > 0 ? Double(ticks) * millisecondsPerTick : 0
     #endif
 
     // `start` installs the run loop source on the main run loop, so this
