@@ -138,6 +138,82 @@ final class LayoutTests: XCTestCase {
                        "should re-snap to a half")
     }
 
+    func testCenteringKeepsTheSizeAndCentersOnBothDisplays() {
+        for visible in [Fixture.mainVisible, Fixture.portrait] {
+            let window = CGRect(x: 7, y: 13, width: 1210, height: 672)
+            let centered = Layout.centered(window, in: visible)
+            XCTAssertEqual(centered.size, window.size, "size is untouched")
+            XCTAssertEqual(centered.midX, visible.midX, accuracy: 0.5)
+            XCTAssertEqual(centered.midY, visible.midY, accuracy: 0.5)
+        }
+    }
+
+    /// The window this was added for: a 120x30 Ghostty is 1210x672, and the
+    /// main display's visible frame starts below the 30pt menu bar.
+    func testCenteringMatchesTheHandComputedFrame() {
+        XCTAssertEqual(Layout.centered(CGRect(x: 0, y: 0, width: 1210, height: 672),
+                                       in: Fixture.mainVisible),
+                       CGRect(x: 675, y: 399, width: 1210, height: 672))
+    }
+
+    /// Unlike an edge, a centered fraction constrains both axes: there is no
+    /// one direction for it to be flush with.
+    func testCenteredFractionsShrinkBothAxesAndStayCentered() {
+        for visible in [Fixture.mainVisible, Fixture.portrait] {
+            for fraction in Layout.fractions {
+                let box = Layout.centered(fraction: fraction, in: visible)
+                XCTAssertEqual(box.width, (visible.width * fraction).rounded())
+                XCTAssertEqual(box.height, (visible.height * fraction).rounded())
+                XCTAssertEqual(box.midX, visible.midX, accuracy: 0.5, "\(fraction) midX")
+                XCTAssertEqual(box.midY, visible.midY, accuracy: 0.5, "\(fraction) midY")
+            }
+        }
+    }
+
+    /// The headline behaviour of tile:center: move first, resize after.
+    func testFirstCenterOnlyMovesThenPressesCycleTheFraction() {
+        let v = Fixture.mainVisible
+        var window = CGRect(x: 7, y: 13, width: 1210, height: 672)   // floating
+
+        window = Layout.nextCentered(window: window, in: v)
+        XCTAssertEqual(window, CGRect(x: 675, y: 399, width: 1210, height: 672),
+                       "first press moves without resizing")
+
+        window = Layout.nextCentered(window: window, in: v)
+        XCTAssertEqual(window, Layout.centered(fraction: 1.0 / 2.0, in: v), "then a half")
+
+        window = Layout.nextCentered(window: window, in: v)
+        XCTAssertEqual(window, Layout.centered(fraction: 2.0 / 3.0, in: v), "then two thirds")
+
+        window = Layout.nextCentered(window: window, in: v)
+        XCTAssertEqual(window, Layout.centered(fraction: 1.0 / 3.0, in: v), "then one third")
+
+        window = Layout.nextCentered(window: window, in: v)
+        XCTAssertEqual(window, Layout.centered(fraction: 1.0 / 2.0, in: v), "then back to a half")
+    }
+
+    /// The trap this hit first: an already-centered window whose size is none of
+    /// the fractions has nowhere to move to, so it must enter the cycle rather
+    /// than sit still forever.
+    func testAnAlreadyCenteredWindowEntersTheCycleInsteadOfStandingStill() {
+        let v = Fixture.mainVisible
+        let odd = Layout.centered(CGRect(x: 0, y: 0, width: 1210, height: 672), in: v)
+        XCTAssertEqual(Layout.nextCentered(window: odd, in: v),
+                       Layout.centered(fraction: 1.0 / 2.0, in: v))
+    }
+
+    func testCenterCyclesOnThePortraitDisplayToo() {
+        let v = Fixture.portrait
+        var window = CGRect(x: v.midX, y: v.midY, width: 301, height: 299)
+        var sizes: [CGSize] = []
+        for _ in 0..<4 {
+            window = Layout.nextCentered(window: window, in: v)
+            sizes.append(window.size)
+        }
+        XCTAssertEqual(sizes[0], CGSize(width: 301, height: 299), "first press keeps the size")
+        XCTAssertEqual(Set(sizes.dropFirst().map(\.width)).count, 3, "then three distinct sizes")
+    }
+
     func testMaximizeDetection() {
         let v = Fixture.mainVisible
         XCTAssertTrue(Layout.isMaximized(v, in: v))

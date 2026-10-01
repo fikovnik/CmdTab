@@ -19,6 +19,8 @@ public protocol WindowActions: AnyObject {
     /// Move the focused window to `edge`, cycling its fraction if it is
     /// already there.
     func tile(_ edge: WindowEdge)
+    /// Move the focused window to the middle of its screen, keeping its size.
+    func center()
     /// Native full screen, the green-button behaviour.
     func toggleFullScreen()
     /// Fill the screen's visible frame, or put the window back if it already does.
@@ -65,6 +67,22 @@ public final class TileAction: Action, LocalCommand {
     }
 
     public func run(on host: any WindowActions) { host.tile(edge) }
+}
+
+/// `tile:center`. Spelled as a tile because that is where you look for it,
+/// but it is not a `WindowEdge`: centering keeps the window's size and only
+/// moves it, so there is no direction to be flush with and no fraction to
+/// cycle through on a second press.
+public final class CenterAction: Action, LocalCommand {
+    public var name: String { "tile:center" }
+
+    public init() {}
+
+    public func bind(_ chord: Chord, into sink: any BindingSink) {
+        sink.registerLocal(chord: chord, command: self)
+    }
+
+    public func run(on host: any WindowActions) { host.center() }
 }
 
 /// `toggle-fullscreen` / `toggle-maximize`. Two shapes of the same idea, so one

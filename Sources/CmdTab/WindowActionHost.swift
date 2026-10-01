@@ -34,6 +34,19 @@ final class WindowActionHost: WindowActions {
         WindowRegistry.shared.promote(target.id)
     }
 
+    /// Unlike tiling, this leaves a full-screen window alone: such a window
+    /// fills the display, so centering the size it has is a no-op and there is
+    /// no fraction it can match to start cycling from.
+    func center() {
+        guard let target = WindowGeometry.focused(),
+              let current = WindowGeometry.frame(of: target.window),
+              let visible = WindowGeometry.visibleFrame(containing: current)
+        else { return }
+
+        WindowGeometry.setFrame(Layout.nextCentered(window: current, in: visible), on: target)
+        WindowRegistry.shared.promote(target.id)
+    }
+
     func toggleFullScreen() {
         guard let target = WindowGeometry.focused() else { return }
         guard let isFullScreen = WindowGeometry.isFullScreen(target.window) else {

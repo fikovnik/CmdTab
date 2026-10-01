@@ -59,6 +59,7 @@ windows.
 | Action | Does |
 |---|---|
 | `tile:left`, `tile:right`, `tile:top`, `tile:bottom` | Occupy that side of the current display |
+| `tile:center` | Centre on the current display: first press moves, further presses cycle the size |
 | `toggle-fullscreen` | Native full screen, and back |
 | `toggle-maximize` | Fill the visible frame, and back to the previous frame |
 | `switch-desktop:1` … `switch-desktop:16` | Switch the focused display to its Nth desktop |
@@ -68,7 +69,7 @@ windows.
 
 An action is either a bare name or `<name>:<parameter>`. A parameter that names
 nothing costs that one binding and says what it expected, so `tile:sideways`
-reports `expected left/right/top/bottom`.
+reports `expected left/right/top/bottom/center`.
 
 Pressing the same direction repeatedly **cycles the size**: a half, then two
 thirds, then one third, then back to a half. Pressing a *different* direction
@@ -76,6 +77,12 @@ snaps to a half of that side instead of continuing the cycle. "Already there" is
 where the window actually is, not from remembered state, so it survives a
 relaunch and a manual resize, with enough tolerance that a terminal snapping to
 whole character cells still counts.
+
+`tile:center` joins that cycle one step late. The first press only *moves* the
+window, keeping whatever size it has, which is the point of it: it puts a
+terminal you have sized by hand in the middle of whichever display it is on.
+Press it again and the fractions take over, applied to both axes at once since
+the centre has no edge to stay flush with.
 
 `toggle-maximize` fills the screen's *visible* frame, so the menu bar and Dock
 stay reachable, and remembers the frame to put the window back to.

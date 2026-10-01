@@ -66,6 +66,41 @@ public enum Layout {
         return frame(edge: edge, fraction: next, in: visible)
     }
 
+    /// The window's own size, moved to the middle of `visible`. The size is
+    /// deliberately untouched: this is what the first press of `tile:center`
+    /// does, before the fractions take over.
+    public static func centered(_ window: CGRect, in visible: CGRect) -> CGRect {
+        CGRect(x: (visible.minX + (visible.width - window.width) / 2).rounded(),
+               y: (visible.minY + (visible.height - window.height) / 2).rounded(),
+               width: window.width, height: window.height)
+    }
+
+    /// A centered box taking `fraction` of `visible`. An edge constrains one
+    /// axis and stays flush with the other; the centre is flush with nothing,
+    /// so the fraction applies to both.
+    public static func centered(fraction: CGFloat, in visible: CGRect) -> CGRect {
+        centered(CGRect(origin: .zero,
+                        size: CGSize(width: (visible.width * fraction).rounded(),
+                                     height: (visible.height * fraction).rounded())),
+                 in: visible)
+    }
+
+    /// `next(edge:)` for the centre. Same cycle as an edge, with one difference:
+    /// a window that is not already at one of the fractions keeps its size and
+    /// is only moved. So the first press centres the window you have, and the
+    /// presses after it walk the fractions.
+    public static func nextCentered(window: CGRect, in visible: CGRect) -> CGRect {
+        if let current = fractions.firstIndex(where: { fraction in
+            matches(window, centered(fraction: fraction, in: visible))
+        }) {
+            return centered(fraction: fractions[(current + 1) % fractions.count], in: visible)
+        }
+        let moved = centered(window, in: visible)
+        // Already centred, at a size that is none of the fractions: moving it
+        // again would stand still, so this is where the cycle starts.
+        return matches(window, moved) ? centered(fraction: fractions[0], in: visible) : moved
+    }
+
     /// Whether the window is already filling `visible`, which is what makes
     /// maximize a toggle.
     public static func isMaximized(_ window: CGRect, in visible: CGRect) -> Bool {

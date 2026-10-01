@@ -19,12 +19,14 @@ final class RecordingSink: BindingSink {
 @MainActor
 final class RecordingHost: WindowActions {
     var tiled: [WindowEdge] = []
+    var centered = 0
     var fullScreenToggles = 0
     var maximizeToggles = 0
     var desktops: [Int] = []
     var steps: [Int] = []
 
     func tile(_ edge: WindowEdge) { tiled.append(edge) }
+    func center() { centered += 1 }
     func toggleFullScreen() { fullScreenToggles += 1 }
     func toggleMaximize() { maximizeToggles += 1 }
     func activateDesktop(_ number: Int) { desktops.append(number) }
@@ -53,6 +55,7 @@ final class ActionTests: XCTestCase {
 
     func testEachPrefixProducesItsOwnClass() throws {
         XCTAssertTrue(try Config.action(for: "tile:left") is TileAction)
+        XCTAssertTrue(try Config.action(for: "tile:center") is CenterAction)
         XCTAssertTrue(try Config.action(for: "toggle-maximize") is ToggleAction)
         XCTAssertTrue(try Config.action(for: "switch-desktop:3") is SwitchDesktopAction)
         XCTAssertTrue(try Config.action(for: "shell:open -a Finder") is ShellAction)
@@ -74,7 +77,7 @@ final class ActionTests: XCTestCase {
     /// The name is what a duplicate-chord error prints, so it has to round-trip
     /// back to the spelling the config used.
     func testNamesRoundTripToTheConfigSpelling() throws {
-        for spec in ["tile:left", "tile:bottom", "toggle-maximize",
+        for spec in ["tile:left", "tile:bottom", "tile:center", "toggle-maximize",
                      "switch-desktop:9", "switch-desktop:previous",
                      "switch-desktop:next"] {
             XCTAssertEqual(try Config.action(for: spec).name, spec)
@@ -111,7 +114,7 @@ final class ActionTests: XCTestCase {
     func testBadParametersSayWhatWasExpected() {
         for value in ["sideways", "", "Left"] {
             assertThrows(Config.ActionError.badParameter("tile", value,
-                                                         "left/right/top/bottom")) {
+                                                         "left/right/top/bottom/center")) {
                 _ = try Config.action(for: "tile:\(value)")
             }
         }
@@ -121,8 +124,8 @@ final class ActionTests: XCTestCase {
                 _ = try Config.action(for: "switch-desktop:\(value)")
             }
         }
-        XCTAssertEqual("\(Config.ActionError.badParameter("tile", "sideways", "left/right/top/bottom"))",
-                       "tile: expected left/right/top/bottom, got \"sideways\"")
+        XCTAssertEqual("\(Config.ActionError.badParameter("tile", "sideways", "left/right/top/bottom/center"))",
+                       "tile: expected left/right/top/bottom/center, got \"sideways\"")
     }
 
     func testBindRoutesEveryActionThroughTheSink() throws {

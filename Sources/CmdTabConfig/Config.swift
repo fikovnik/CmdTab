@@ -193,10 +193,11 @@ public struct Config: Sendable {
             return AppleScriptAction(source: source)
         }
         if let direction = spec.dropPrefix("tile:") {
+            if direction == "center" { return CenterAction() }
             guard let edge = WindowEdge(rawValue: direction) else {
                 throw ActionError.badParameter(
                     "tile", direction,
-                    WindowEdge.allCases.map(\.rawValue).joined(separator: "/"))
+                    (WindowEdge.allCases.map(\.rawValue) + ["center"]).joined(separator: "/"))
             }
             return TileAction(edge: edge)
         }
