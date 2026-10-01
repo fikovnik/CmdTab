@@ -9,7 +9,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var tap = HotkeyTap(switcher: switcher, host: host)
     private var statusItem: NSStatusItem?
     private var permissionTimer: Timer?
-    private var spaces = SpaceMap()
     /// Appended to the desktop number: "…" until the tap is up, "!" if it
     /// could not be created.
     private var tapMarker = "…"
@@ -30,7 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         applyConfig()
         installStatusItem()
-        WindowRegistry.shared.start()
+        WindowTracker.shared.start()
 
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main
@@ -38,13 +37,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 Focus.spaceDidChange()
-                // Rebuilding the map costs a CGS round trip per Space, so only
-                // pay it when the menu bar is actually showing the number.
-                if self.menuIcon == .desktopNumber {
-                    // Desktops come and go, so renumber rather than just re-read.
-                    self.spaces = SpaceMap()
-                    self.updateStatusTitle()
-                }
+                WindowTracker.shared.scheduleRefresh()
+                self.updateStatusTitle()
                 #if DIAGNOSTICS
                 guard Diagnostics.autoTraceEnabled else { return }
                 Diagnostics.trace("activeSpaceDidChange")
@@ -97,7 +91,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         switch menuIcon {
         case .desktopNumber:
             // A full-screen Space has no desktop number, so it keeps the tab glyph.
-            icon = spaces.number(forSpace: WindowServer.activeSpace).map(String.init) ?? "⇥"
+            let layout = Spaces.layout()
+            let space = layout.display(identifier: Spaces.activeDisplayIdentifier())?.currentSpace
+            icon = space.flatMap(layout.desktopNumber(of:)).map(String.init) ?? "⇥"
         case .literal(let text):
             icon = text
         }

@@ -28,7 +28,7 @@ enum Focus {
     }
 
     private struct Pending {
-        let window: WindowRef
+        let window: Window
         let space: SpaceID
         let origin: Origin?
         let timer: Timer
@@ -41,16 +41,15 @@ enum Focus {
     /// A focus that waits for a Space change. A new focus replaces it.
     private static var pending: Pending?
 
-    static func focus(_ window: WindowRef) {
+    static func focus(_ window: Window) {
         pending?.timer.invalidate()
         pending = nil
 
         let layout = Spaces.layout()
         let origin = origin(in: layout)
-        let space = WindowRegistry.shared.space(forWindow: window.id)
-        guard let space, !layout.visibleSpaces.contains(space), SpaceSwitcher.show(space, in: layout)
-        else {
-            run(window, spaces: space.map { [$0] } ?? [], origin: origin)
+        let isVisible = window.spaces.contains(where: layout.visibleSpaces.contains)
+        guard !isVisible, let space = window.spaces.first, SpaceSwitcher.show(space, in: layout) else {
+            run(window, origin: origin)
             return
         }
 
@@ -72,7 +71,7 @@ enum Focus {
         guard let pending else { return }
         self.pending = nil
         pending.timer.invalidate()
-        run(pending.window, spaces: [pending.space], origin: pending.origin)
+        run(pending.window, origin: pending.origin)
     }
 
     private static func origin(in layout: SpaceLayout) -> Origin? {
@@ -82,7 +81,7 @@ enum Focus {
         return Origin(space: space, pid: pid)
     }
 
-    private static func run(_ window: WindowRef, spaces: [SpaceID], origin: Origin?) {
+    private static func run(_ window: Window, origin: Origin?) {
         let app = NSRunningApplication(processIdentifier: window.pid)
         if app?.isHidden == true { app?.unhide() }
 
@@ -103,12 +102,27 @@ enum Focus {
         // Do not do this for a Space that is still visible, for example on the
         // other display. There the call can bring the old app back to the
         // front (alt-tab #5586).
-        if let origin, origin.pid != window.pid, !spaces.isEmpty, !spaces.contains(origin.space),
+        if let origin, origin.pid != window.pid, !window.spaces.isEmpty,
+           !window.spaces.contains(origin.space),
            !Spaces.layout().visibleSpaces.contains(origin.space) {
             WindowServer.setFrontApp(origin.pid, of: origin.space)
         }
 
         Diagnostics.note("focus id=\(window.id) fronted=\(fronted) raise=\(raise.map { "\($0.rawValue)" } ?? "no element") \(window.appName) | \(window.title)")
-        WindowRegistry.shared.promote(window.id)
+
+        // The focus order changes only when the app reports the focus.
+        let (id, pid) = (window.id, window.pid)
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated { WindowTracker.shared.readFocus(of: pid) }
+        }
+        #if DIAGNOSTICS
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            MainActor.assumeIsolated {
+                let focused = AXUIElement.application(pid).element(kAXFocusedWindowAttribute)?.windowID
+                let front = NSWorkspace.shared.frontmostApplication?.processIdentifier
+                Diagnostics.note("focus took=\(focused == id && front == pid) id=\(id) focused=\(focused.map(String.init) ?? "nil")")
+            }
+        }
+        #endif
     }
 }

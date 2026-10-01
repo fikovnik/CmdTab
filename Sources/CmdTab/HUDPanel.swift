@@ -39,7 +39,7 @@ private enum Palette {
 }
 
 private final class HUDView: NSView {
-    var items: [WindowRef] = []
+    var items: [Window] = []
     var selected = 0
     var scope = ""
     var maxRows = rowCap
@@ -70,14 +70,14 @@ private final class HUDView: NSView {
 
     // MARK: - Text
 
-    private func rowWidth(for window: WindowRef) -> CGFloat {
+    private func rowWidth(for window: Window) -> CGFloat {
         let badge = badge(window)?.size().width ?? 0
         return padding * 3 + iconSize + 8 + title(window).size().width
             + (badge > 0 ? badgeGap + badge : 0)
             + (scrolls ? scrollBarWidth + 8 : 0)
     }
 
-    private func title(_ window: WindowRef) -> NSAttributedString {
+    private func title(_ window: Window) -> NSAttributedString {
         let result = NSMutableAttributedString(
             string: window.appName,
             attributes: [
@@ -95,7 +95,7 @@ private final class HUDView: NSView {
         return result
     }
 
-    private func badge(_ window: WindowRef) -> NSAttributedString? {
+    private func badge(_ window: Window) -> NSAttributedString? {
         guard let label = window.spaceLabel else { return nil }
         return NSAttributedString(string: label, attributes: [
             .font: NSFont.systemFont(ofSize: 11),
@@ -140,7 +140,7 @@ private final class HUDView: NSView {
         drawFooter()
     }
 
-    private func draw(_ window: WindowRef, at slot: Int, selected isSelected: Bool, rightInset: CGFloat) {
+    private func draw(_ window: Window, at slot: Int, selected isSelected: Bool, rightInset: CGFloat) {
         let row = NSRect(x: padding / 2,
                          y: padding + CGFloat(slot) * rowHeight,
                          width: bounds.width - padding / 2 - rightInset,
@@ -236,7 +236,7 @@ final class HUDPanel {
         return (panel.frame, activeScreen())
     }
 
-    func show(_ windows: [WindowRef], selected: Int, scope: String) {
+    func show(_ windows: [Window], selected: Int, scope: String) {
         let screen = activeScreen()
         view.items = windows
         view.selected = selected
@@ -268,7 +268,7 @@ final class HUDPanel {
 
     /// Render the HUD offscreen to a PNG. Lets layout be checked without
     /// capturing the screen, and so without Screen Recording permission.
-    func render(_ windows: [WindowRef], selected: Int, scope: String, rows: Int,
+    func render(_ windows: [Window], selected: Int, scope: String, rows: Int,
                 backdrop: NSColor, to path: String) {
         view.items = windows
         view.selected = selected

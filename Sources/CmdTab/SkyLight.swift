@@ -1,23 +1,17 @@
 import AppKit
+import CmdTabModel
 
 /// Windows, Spaces and focus from the WindowServer, through private SkyLight
 /// and CGS functions. Every macOS window switcher uses these functions. A
 /// failed call gives an empty result.
 @MainActor
 enum WindowServer {
-    struct Window {
-        let id: CGWindowID
-        let pid: pid_t
-        /// Set only with Screen Recording permission.
-        let title: String?
-    }
-
     /// The real windows on `space`, front to back.
     ///
     /// `kAXWindows` gives only the windows on visible Spaces. This query gives
     /// the windows on every Space. On a visible Space, its result after
     /// `isReal` is the same as the AX result.
-    static func windows(onSpace space: CGSSpaceID, titles: [CGWindowID: String]) -> [Window] {
+    static func windows(onSpace space: SpaceID) -> [(id: CGWindowID, pid: pid_t)] {
         let ids = windowIDs(onSpace: space)
         guard !ids.isEmpty,
               let query = SLSWindowQueryWindows(connection, ids as CFArray, Int32(ids.count))?
@@ -25,17 +19,16 @@ enum WindowServer {
               let iterator = SLSWindowQueryResultCopyWindows(query)?.takeRetainedValue()
         else { return [] }
 
-        var result: [Window] = []
+        var result: [(id: CGWindowID, pid: pid_t)] = []
         while SLSWindowIteratorAdvance(iterator) {
             guard isReal(iterator) else { continue }
-            let id = SLSWindowIteratorGetWindowID(iterator)
-            result.append(Window(id: id, pid: SLSWindowIteratorGetPID(iterator), title: titles[id]))
+            result.append((SLSWindowIteratorGetWindowID(iterator), SLSWindowIteratorGetPID(iterator)))
         }
         return result
     }
 
     /// All window IDs on `space`. Option 0x7 includes minimized windows.
-    private static func windowIDs(onSpace space: CGSSpaceID) -> [NSNumber] {
+    private static func windowIDs(onSpace space: SpaceID) -> [NSNumber] {
         var setTags: UInt64 = 0
         var clearTags: UInt64 = 0
         let raw = SLSCopyWindowsWithOptionsAndTags(
@@ -76,7 +69,7 @@ enum WindowServer {
         return result
     }
 
-    static var activeSpace: CGSSpaceID { SLSGetActiveSpace(connection) }
+    static var activeSpace: SpaceID { SLSGetActiveSpace(connection) }
 
     /// The real windows on the active Space, and the windows that no single
     /// window in front of them covers.
@@ -85,7 +78,7 @@ enum WindowServer {
         var all = Set<CGWindowID>()
         var uncovered = Set<CGWindowID>()
         var inFront: [CGRect] = []
-        for window in windows(onSpace: activeSpace, titles: [:]) {
+        for window in windows(onSpace: activeSpace) {
             all.insert(window.id)
             guard let frame = frames[window.id] else { continue }
             if !inFront.contains(where: { $0.contains(frame) }) { uncovered.insert(window.id) }
@@ -150,7 +143,7 @@ enum WindowServer {
 
     /// Sets the front app that macOS keeps for `space`. This does not change
     /// the global front process.
-    static func setFrontApp(_ pid: pid_t, of space: CGSSpaceID) {
+    static func setFrontApp(_ pid: pid_t, of space: SpaceID) {
         var psn = ProcessSerialNumber()
         guard GetProcessForPID(pid, &psn) == noErr else { return }
         _ = SLSSpaceSetFrontPSN(connection, space, psn)
@@ -188,7 +181,6 @@ enum WindowServer {
 // MARK: - Declarations
 
 typealias CGSConnectionID = Int32
-typealias CGSSpaceID = UInt64
 
 private let connection = CGSMainConnectionID()
 
@@ -206,10 +198,6 @@ func CGSCopyManagedDisplaySpaces(_ cid: CGSConnectionID) -> Unmanaged<CFArray>?
 
 @_silgen_name("CGSCopyActiveMenuBarDisplayIdentifier")
 func CGSCopyActiveMenuBarDisplayIdentifier(_ cid: CGSConnectionID) -> Unmanaged<CFString>?
-
-@_silgen_name("CGSCopySpacesForWindows")
-func CGSCopySpacesForWindows(_ cid: CGSConnectionID, _ mask: Int32,
-                             _ windowIDs: CFArray) -> Unmanaged<CFArray>?
 
 /// Gives the WindowServer ID of an AX element. This is the only link from
 /// the AX tree to the WindowServer.
@@ -255,7 +243,7 @@ private func SLSWindowIteratorGetAttributes(_ iterator: CFTypeRef) -> UInt64
 private func SLSWindowIteratorGetAlpha(_ iterator: CFTypeRef) -> Float
 
 @_silgen_name("SLSGetActiveSpace")
-private func SLSGetActiveSpace(_ cid: CGSConnectionID) -> CGSSpaceID
+private func SLSGetActiveSpace(_ cid: CGSConnectionID) -> SpaceID
 
 @_silgen_name("SLSHWCaptureWindowList")
 private func SLSHWCaptureWindowList(_ cid: CGSConnectionID,
@@ -276,5 +264,5 @@ private func SLPSPostEventRecordTo(_ psn: UnsafeMutablePointer<ProcessSerialNumb
                                    _ bytes: UnsafeMutablePointer<UInt8>) -> OSStatus
 
 @_silgen_name("SLSSpaceSetFrontPSN")
-private func SLSSpaceSetFrontPSN(_ cid: CGSConnectionID, _ space: CGSSpaceID,
+private func SLSSpaceSetFrontPSN(_ cid: CGSConnectionID, _ space: SpaceID,
                                  _ psn: ProcessSerialNumber) -> CGError

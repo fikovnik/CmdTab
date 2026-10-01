@@ -41,13 +41,12 @@ enum Diagnostics {
         // Resolve the accent colour and appearance the panel draws with. Both
         // want an initialized app, and this path runs before `NSApp.run`.
         _ = NSApplication.shared
-        let placeholder = AXUIElementCreateApplication(ProcessInfo.processInfo.processIdentifier)
         let samples: [(String, String, String?)] = [
             ("Ghostty", "cmd-tab@pokhara.local: ✳ Claude Code", "Desktop 2"),
             ("Ghostty", "NI-APR-0@kathmandu: ✳ polymorphic-type-analysis", "Desktop 2"),
             ("Google Chrome", "v8/src/codegen/arm64/assembler-arm64.cc at main · v8/v8 — an overlong title that has to be truncated somewhere", "Desktop 1"),
             ("Slack", "#general", "Desktop 1"),
-            ("Obsidian", "Daily note", "Desktop 1"),
+            ("Obsidian", "Daily note", "All Desktops"),
             ("Spotify", "", "Desktop 1"),
             ("Microsoft Teams", "Calendar", "Desktop 1"),
             ("Zotero", "My Library", "Desktop 1"),
@@ -55,11 +54,11 @@ enum Diagnostics {
             ("Finder", "Projects", "Desktop 3"),
         ]
         let windows = samples.enumerated().map { index, sample in
-            WindowRef(id: CGWindowID(index + 1), pid: pid_t(1000 + index),
-                      appName: sample.0, title: sample.1,
-                      element: placeholder,
-                      icon: NSWorkspace.shared.icon(for: .applicationBundle),
-                      spaceLabel: sample.2)
+            var window = Window(id: CGWindowID(index + 1), pid: pid_t(1000 + index),
+                                appName: sample.0, icon: NSWorkspace.shared.icon(for: .applicationBundle))
+            window.title = sample.1
+            window.spaceLabel = sample.2
+            return window
         }
         let base = (path as NSString).deletingPathExtension
         // Both extremes of what can sit behind the blur.
@@ -69,33 +68,30 @@ enum Diagnostics {
                           backdrop: .black, to: base + "-on-black.png")
     }
 
-    /// What both switcher scopes currently resolve to, plus per-app AX counts.
+    /// Both switcher lists, the preview cache, the recent events and the
+    /// windows of each app. Starts with a full refresh.
     static func report() -> String {
         var out = "AXIsProcessTrusted: \(AXIsProcessTrusted())\n"
         out += "ScreenRecording: \(CGPreflightScreenCaptureAccess())\n"
 
+        let tracker = WindowTracker.shared
         var clock = Date()
-        let current = WindowEnumerator.windows(.currentSpace)
-        out += String(format: "\n== this-Space scope (%d) — %.0f ms ==\n",
-                      current.count, Date().timeIntervalSince(clock) * 1000)
-        for window in current {
-            out += "  \(window.appName) | \(window.title)\n"
-        }
+        tracker.refresh()
+        out += String(format: "refresh: %.0f ms\n", Date().timeIntervalSince(clock) * 1000)
 
-        // The default Cmd+Tab scope. `stamp=-` is a window never seen in use,
-        // which is why it sorts below the stamped ones. Read this list top-down
-        // to see why the switcher offered what it offered.
-        clock = Date()
-        let all = WindowEnumerator.windows(.allSpaces)
-        out += String(format: "\n== all-Spaces scope (%d) — %.0f ms ==\n",
-                      all.count, Date().timeIntervalSince(clock) * 1000)
-        for window in all {
-            let stamp = WindowRegistry.shared.stamp(of: window.id).map(String.init) ?? "-"
-            // "server" is a window only the WindowServer can see, i.e. one
-            // off-Space. Once you switch to that Space it gains an AX element,
-            // and a title too if Screen Recording is off.
-            let kind = window.element == nil ? "server" : "ax"
-            out += "  stamp=\(stamp) \(kind) id=\(window.id) [\(window.spaceLabel ?? "-")] \(window.appName) | \(window.title)\n"
+        let layout = Spaces.layout()
+        for scope in [WindowScope.currentSpace, .allSpaces] {
+            clock = Date()
+            let list = tracker.list(scope, in: layout)
+            out += String(format: "\n== %@ (%d) — %.1f ms ==\n", "\(scope)", list.count,
+                          Date().timeIntervalSince(clock) * 1000)
+            // `recent=-`: the window never had focus, so it comes after the
+            // windows that had. `server`: AX has not returned the window yet.
+            for window in list {
+                let rank = tracker.recent.order.firstIndex(of: window.id).map(String.init) ?? "-"
+                let kind = window.element == nil ? "server" : "ax"
+                out += "  recent=\(rank) \(kind) id=\(window.id) [\(window.spaceLabel ?? "-")] \(window.appName) | \(window.title)\n"
+            }
         }
 
         out += "\n== preview cache ==\n"
@@ -104,29 +100,13 @@ enum Diagnostics {
         out += "\n== recent switcher events ==\n"
         for event in events { out += "  \(event)\n" }
 
-        var onScreenByPID: [pid_t: Int] = [:]
-        for candidate in WindowEnumerator.candidates(onScreenOnly: true) {
-            onScreenByPID[candidate.pid, default: 0] += 1
-        }
-
-        var axByPID: [pid_t: Int] = [:]
-        for window in WindowEnumerator.axWindowsOfAllApps() {
-            axByPID[window.pid, default: 0] += 1
-        }
-
-        var widenedByPID: [pid_t: Int] = [:]
-        for window in all {
-            widenedByPID[window.pid, default: 0] += 1
-        }
-
         out += "\n== apps ==\n"
-        for app in NSWorkspace.shared.runningApplications
-        where app.activationPolicy == .regular && app.processIdentifier != ProcessInfo.processInfo.processIdentifier {
-            let pid = app.processIdentifier
+        let windows = Array(tracker.windows.values)
+        for (pid, app) in WindowTracker.regularApps().sorted(by: { $0.key < $1.key }) {
+            let own = windows.filter { $0.pid == pid }
             out += "  \(app.localizedName ?? "?") pid=\(pid) hidden=\(app.isHidden)"
-            out += " cgOnScreen=\(onScreenByPID[pid] ?? 0)"
-            out += " ax=\(axByPID[pid] ?? 0)"
-            out += " inWidenedScope=\(widenedByPID[pid] ?? 0)\n"
+            out += " windows=\(own.count) withElement=\(own.filter { $0.element != nil }.count)"
+            out += " nonStandard=\(own.filter { !$0.isStandard }.count)\n"
         }
         return out
     }

@@ -84,7 +84,7 @@ final class WindowPreview {
     /// thumbnail: the panel stays up across a step, so a silent return leaves a
     /// frame that belongs to another window sitting under this one's title,
     /// which reads as two windows sharing one preview.
-    func show(_ window: WindowRef, anchor: NSRect, on screen: NSScreen) {
+    func show(_ window: Window, anchor: NSRect, on screen: NSScreen) {
         let live = onActiveSpace().all.contains(window.id)
         let cached = cache[window.id]
 

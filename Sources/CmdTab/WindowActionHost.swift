@@ -29,9 +29,6 @@ final class WindowActionHost: WindowActions {
 
         WindowGeometry.setFrame(Layout.next(edge: edge, window: current, in: visible),
                                 on: target)
-        // The window it was tiled against is the one you just acted on, so keep
-        // the switcher's idea of recency in step.
-        WindowRegistry.shared.promote(target.id)
     }
 
     /// Unlike tiling, this leaves a full-screen window alone: such a window
@@ -44,7 +41,6 @@ final class WindowActionHost: WindowActions {
         else { return }
 
         WindowGeometry.setFrame(Layout.nextCentered(window: current, in: visible), on: target)
-        WindowRegistry.shared.promote(target.id)
     }
 
     func toggleFullScreen() {
@@ -81,7 +77,6 @@ final class WindowActionHost: WindowActions {
             restoreFrames[target.id] = current
             WindowGeometry.setFrame(visible, on: target)
         }
-        WindowRegistry.shared.promote(target.id)
     }
 
     func activateDesktop(_ number: Int) { SpaceSwitcher.activate(desktop: number) }

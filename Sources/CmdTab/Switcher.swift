@@ -27,7 +27,7 @@ final class Switcher {
         var scope = WindowScope.allSpaces
         /// `nil` until the scan lands, distinct from an empty list, which means
         /// the scan ran and found nothing worth switching to.
-        var windows: [WindowRef]?
+        var windows: [Window]?
         /// Set once Cmd has been held past `revealDelay`. The list is shown as
         /// soon as both this and a scanned list are true, in whichever order
         /// they happen to arrive.
@@ -238,13 +238,15 @@ final class Switcher {
     /// The window list for a session's scope, most-recently-used first. Talks
     /// to the Accessibility API, so it never runs on the tap callback. A list of
     /// one is returned empty: there is nothing to switch to.
-    private static func scan(_ session: Session) -> [WindowRef] {
-        // Stamp the window being left first. Runs on the turn after the keypress,
-        // so nothing can have stolen focus in between, and it is what lets the
-        // next cycle find this window one below the top, on any Space.
-        WindowRegistry.shared.promoteFrontWindow()
+    private static func scan(_ session: Session) -> [Window] {
+        let tracker = WindowTracker.shared
+        // The window that the user leaves goes first. Then the next window in
+        // the list is the previous window, on any Space.
+        tracker.promoteFrontWindow()
+        let layout = Spaces.layout()
+        tracker.syncWithServer(layout)
 
-        var found = WindowEnumerator.windows(session.scope)
+        var found = tracker.list(session.scope, in: layout)
         if let pid = session.appFilter {
             found = found.filter { $0.pid == pid }
         }
