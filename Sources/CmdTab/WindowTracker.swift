@@ -101,6 +101,11 @@ final class WindowTracker {
                 found[server.id] = window
             }
         }
+        // The query does not give the windows of a hidden app. Keep them, so
+        // that the switcher lists them. `Focus` shows the app again.
+        for (id, window) in windows where found[id] == nil && apps[window.pid]?.isHidden == true {
+            found[id] = window
+        }
         windows = found
         recent.retain(Set(found.keys))
     }

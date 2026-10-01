@@ -221,6 +221,10 @@ the focused window.
 - **An empty desktop.** After a switch to a desktop that has no window to
   focus, macOS can give focus to the other display. Then the next
   `switch-desktop` acts on that display. The system Ctrl+N does the same.
+- **Hidden apps.** The WindowServer does not list the windows of a hidden app.
+  CmdTab keeps each window that it saw before the app was hidden, and shows the
+  app again on a switch. A window of an app that was hidden before CmdTab
+  started is not in the list.
 - **Secure Input.** macOS stops all event taps while a password field has
   focus. The shortcuts do not operate until the focus leaves the field.
 - **Another app has the chord.** A launcher such as Raycast, or an app with its
