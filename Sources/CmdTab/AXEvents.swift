@@ -63,7 +63,6 @@ private func axEventsCallback(_ observer: AXObserver, _ element: AXUIElement,
     MainActor.assumeIsolated {
         let tracker = WindowTracker.shared
         tracker.update(id, element: window, title: title)
-        WindowPreview.shared.recapture(id)
         // A background app can change its key window. That is not a switch.
         if focused, NSWorkspace.shared.frontmostApplication?.processIdentifier == pid {
             tracker.focusReported(id, pid: pid)

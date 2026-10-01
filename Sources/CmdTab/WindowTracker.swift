@@ -45,6 +45,10 @@ final class WindowTracker {
     private(set) var recent = RecentWindows()
     private var refreshTimer: Timer?
     private var settleTimer: Timer?
+    /// The window that `promoteFrontWindow` captured before a switch. That
+    /// frame is better than a capture after the switch, when the window can be
+    /// covered. Cleared when the focus order moves to a different window.
+    private var capturedBeforeSwitch: CGWindowID?
 
     func start() {
         let center = NSWorkspace.shared.notificationCenter
@@ -119,7 +123,6 @@ final class WindowTracker {
         }
 
         AXEvents.sync(Set(Self.regularApps().keys))
-        WindowPreview.shared.warm()
         // This runs on the main thread, which also handles the event tap.
         Diagnostics.note(String(format: "refresh: %.0f ms", Date().timeIntervalSince(started) * 1000))
     }
@@ -203,14 +206,17 @@ final class WindowTracker {
 
     // MARK: - Focus order
 
-    /// Promotes the focused window of the front app immediately. This is the
-    /// window that the user leaves when a switcher cycle starts.
+    /// Promotes the focused window of the front app immediately, and
+    /// captures it for the preview. This is the window that the user leaves
+    /// when a switcher cycle starts.
     func promoteFrontWindow() {
         recent.settleAll()
         guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier,
               let id = AXUIElement.application(pid).element(kAXFocusedWindowAttribute)?.windowID
         else { return }
         recent.promote(id)
+        WindowPreview.shared.capture(id)
+        capturedBeforeSwitch = id
     }
 
     /// Reads the focused window of app `pid` as a focus answer.
@@ -222,6 +228,13 @@ final class WindowTracker {
 
     /// App `pid` reports `id` as its focused window.
     func focusReported(_ id: CGWindowID, pid: pid_t) {
+        // The window that had focus is still drawn now. Later, its app can
+        // release the drawing surface.
+        if let leaving = recent.order.first, leaving != id, leaving != capturedBeforeSwitch,
+           let window = windows[leaving],
+           window.spaces.contains(where: Spaces.layout().visibleSpaces.contains) {
+            WindowPreview.shared.capture(leaving)
+        }
         recent.report(id, pid: pid, at: ProcessInfo.processInfo.systemUptime)
         scheduleSettle()
     }
@@ -232,6 +245,7 @@ final class WindowTracker {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.recent.settle(at: ProcessInfo.processInfo.systemUptime)
+                if self.recent.order.first != self.capturedBeforeSwitch { self.capturedBeforeSwitch = nil }
                 if self.recent.hasPendingAnswers { self.scheduleSettle() }
             }
         }

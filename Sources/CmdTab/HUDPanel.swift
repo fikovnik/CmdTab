@@ -301,36 +301,41 @@ final class HUDPanel {
 
     private func ensurePanel() -> NSPanel {
         if let panel { return panel }
-
-        let panel = NSPanel(contentRect: .zero,
-                            styleMask: [.borderless, .nonactivatingPanel],
-                            backing: .buffered,
-                            defer: false)
-        panel.isFloatingPanel = true
-        panel.level = .popUpMenu
-        panel.hidesOnDeactivate = false
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = true
-        panel.ignoresMouseEvents = true
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
-        // Pin the appearance so the blur uses its dark variant in Light mode
-        // too. The palette above is light-on-dark either way.
-        panel.appearance = NSAppearance(named: .darkAqua)
-
-        let blur = NSVisualEffectView()
-        blur.material = .hudWindow
-        blur.blendingMode = .behindWindow
-        blur.state = .active
-        blur.wantsLayer = true
-        blur.layer?.cornerRadius = 10
-        blur.layer?.masksToBounds = true
-        blur.autoresizingMask = [.width, .height]
-
-        blur.addSubview(view)
-        panel.contentView = blur
-
+        let (panel, content) = makeOverlayPanel()
+        content.addSubview(view)
         self.panel = panel
         return panel
     }
+}
+
+/// A borderless panel with a dark blur, for the list and the preview. It does
+/// not activate CmdTab, it ignores the mouse, and it shows on all Spaces, also
+/// over a full-screen window.
+@MainActor
+func makeOverlayPanel() -> (panel: NSPanel, content: NSView) {
+    let panel = NSPanel(contentRect: .zero,
+                        styleMask: [.borderless, .nonactivatingPanel],
+                        backing: .buffered,
+                        defer: false)
+    panel.isFloatingPanel = true
+    panel.level = .popUpMenu
+    panel.hidesOnDeactivate = false
+    panel.isOpaque = false
+    panel.backgroundColor = .clear
+    panel.hasShadow = true
+    panel.ignoresMouseEvents = true
+    panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+    // The blur is dark also in Light mode. The palette is light on dark.
+    panel.appearance = NSAppearance(named: .darkAqua)
+
+    let blur = NSVisualEffectView()
+    blur.material = .hudWindow
+    blur.blendingMode = .behindWindow
+    blur.state = .active
+    blur.wantsLayer = true
+    blur.layer?.cornerRadius = 10
+    blur.layer?.masksToBounds = true
+    blur.autoresizingMask = [.width, .height]
+    panel.contentView = blur
+    return (panel, blur)
 }

@@ -198,7 +198,10 @@ final class Switcher {
         guard let session, let windows = session.windows, !windows.isEmpty,
               let anchor = hud.anchor
         else { return }
-        preview.show(windows[session.index], anchor: anchor.frame, on: anchor.screen)
+        let window = windows[session.index]
+        let visible = Spaces.layout().visibleSpaces
+        preview.show(window, isVisible: window.spaces.contains(where: visible.contains),
+                     anchor: anchor.frame, on: anchor.screen)
     }
 
     /// Drop the cycle. One assignment, so no field can be left behind.

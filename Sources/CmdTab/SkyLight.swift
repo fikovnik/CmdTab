@@ -69,40 +69,6 @@ enum WindowServer {
         return result
     }
 
-    static var activeSpace: SpaceID { SLSGetActiveSpace(connection) }
-
-    /// The real windows on the active Space, and the windows that no single
-    /// window in front of them covers.
-    static func activeSpaceWindows() -> (all: Set<CGWindowID>, uncovered: Set<CGWindowID>) {
-        let frames = bounds()
-        var all = Set<CGWindowID>()
-        var uncovered = Set<CGWindowID>()
-        var inFront: [CGRect] = []
-        for window in windows(onSpace: activeSpace) {
-            all.insert(window.id)
-            guard let frame = frames[window.id] else { continue }
-            if !inFront.contains(where: { $0.contains(frame) }) { uncovered.insert(window.id) }
-            inFront.append(frame)
-        }
-        return (all, uncovered)
-    }
-
-    private static func bounds() -> [CGWindowID: CGRect] {
-        guard let list = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements],
-                                                    kCGNullWindowID) as? [[String: Any]]
-        else { return [:] }
-
-        var result: [CGWindowID: CGRect] = [:]
-        for info in list {
-            guard let id = info[kCGWindowNumber as String] as? CGWindowID,
-                  let raw = info[kCGWindowBounds as String] as? [String: CGFloat]
-            else { continue }
-            result[id] = CGRect(x: raw["X"] ?? 0, y: raw["Y"] ?? 0,
-                                width: raw["Width"] ?? 0, height: raw["Height"] ?? 0)
-        }
-        return result
-    }
-
     /// The size of a window in points.
     static func size(ofWindow id: CGWindowID) -> CGSize? {
         guard let list = CGWindowListCopyWindowInfo([.optionIncludingWindow], id)
@@ -241,9 +207,6 @@ private func SLSWindowIteratorGetAttributes(_ iterator: CFTypeRef) -> UInt64
 
 @_silgen_name("SLSWindowIteratorGetAlpha")
 private func SLSWindowIteratorGetAlpha(_ iterator: CFTypeRef) -> Float
-
-@_silgen_name("SLSGetActiveSpace")
-private func SLSGetActiveSpace(_ cid: CGSConnectionID) -> SpaceID
 
 @_silgen_name("SLSHWCaptureWindowList")
 private func SLSHWCaptureWindowList(_ cid: CGSConnectionID,
