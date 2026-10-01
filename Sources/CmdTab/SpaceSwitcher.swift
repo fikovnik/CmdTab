@@ -40,6 +40,14 @@ enum SpaceSwitcher {
         switchTo(display.desktops[target], on: display.identifier)
     }
 
+    /// Bring `space` up on the display that holds it, focused or not. For
+    /// reaching a window there that has no AX element to raise.
+    static func show(_ space: CGSSpaceID) {
+        guard let display = SpaceMap().displays.first(where: { $0.desktops.contains(space) })
+        else { return }
+        switchTo(space, on: display.identifier)
+    }
+
     /// Rebuilt per call rather than cached: desktops are created and destroyed
     /// while the app runs, and a stale map here would switch to the wrong one.
     private static func focusedDisplay() -> SpaceMap.Display? {
