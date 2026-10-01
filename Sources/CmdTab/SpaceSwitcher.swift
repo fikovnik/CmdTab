@@ -31,6 +31,15 @@ enum SpaceSwitcher {
         swipe(swipes, on: display)
     }
 
+    /// Shows `space` on its display. Returns false if no swipe was necessary
+    /// or possible.
+    static func show(_ space: SpaceID, in layout: SpaceLayout) -> Bool {
+        guard let display = layout.display(containing: space),
+              let swipes = display.swipes(to: space), swipes != 0
+        else { return false }
+        return swipe(swipes, on: display)
+    }
+
     private static func activeDisplay() -> SpaceLayout.Display? {
         let display = Spaces.layout().display(identifier: Spaces.activeDisplayIdentifier())
         if display == nil { Log.note("could not identify the display with the active menu bar") }
@@ -38,8 +47,9 @@ enum SpaceSwitcher {
     }
 
     /// Posts one swipe for each Space to move. A negative count moves left.
-    private static func swipe(_ count: Int, on display: SpaceLayout.Display) {
-        guard count != 0, let frame = Spaces.frame(of: display) else { return }
+    @discardableResult
+    private static func swipe(_ count: Int, on display: SpaceLayout.Display) -> Bool {
+        guard count != 0, let frame = Spaces.frame(of: display) else { return false }
         // The Dock applies a swipe to the display that contains the event
         // location. The location does not move the pointer.
         let location = CGPoint(x: frame.midX, y: frame.midY)
@@ -47,7 +57,7 @@ enum SpaceSwitcher {
         let velocity = sign * DockSwipe.velocity * Double(abs(count))
         for _ in 0..<abs(count) {
             for phase in DockSwipe.phases {
-                guard let event = CGEvent(source: nil) else { return }
+                guard let event = CGEvent(source: nil) else { return false }
                 event.location = location
                 // The user holds the modifiers of the chord. Do not send them
                 // with the gesture.
@@ -62,6 +72,7 @@ enum SpaceSwitcher {
                 event.post(tap: .cgSessionEventTap)
             }
         }
+        return true
     }
 }
 

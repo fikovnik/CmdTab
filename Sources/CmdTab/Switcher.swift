@@ -147,7 +147,7 @@ final class Switcher {
             return
         }
         Diagnostics.note("commit index=\(session.index) of \(windows.count)")
-        WindowEnumerator.focus(windows[session.index])
+        Focus.focus(windows[session.index])
     }
 
     private func reveal() {

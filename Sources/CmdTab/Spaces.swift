@@ -33,6 +33,3 @@ enum Spaces {
         return nil
     }
 }
-
-@_silgen_name("CGSCopyActiveMenuBarDisplayIdentifier")
-private func CGSCopyActiveMenuBarDisplayIdentifier(_ cid: CGSConnectionID) -> Unmanaged<CFString>?

@@ -1,21 +1,7 @@
 import AppKit
 
-typealias CGSConnectionID = Int32
-typealias CGSSpaceID = UInt64
-
 /// kCGSSpaceCurrent | kCGSSpaceOther | kCGSSpaceAll
 private let allSpacesMask: Int32 = 7
-
-@_silgen_name("CGSMainConnectionID")
-func CGSMainConnectionID() -> CGSConnectionID
-
-@_silgen_name("CGSCopyManagedDisplaySpaces")
-func CGSCopyManagedDisplaySpaces(_ cid: CGSConnectionID) -> Unmanaged<CFArray>?
-
-@_silgen_name("CGSCopySpacesForWindows")
-private func CGSCopySpacesForWindows(_ cid: CGSConnectionID,
-                                     _ mask: Int32,
-                                     _ windowIDs: CFArray) -> Unmanaged<CFArray>?
 
 /// Which Space a window lives on, what to call that Space, and how the Spaces
 /// are ordered left to right.
@@ -66,28 +52,6 @@ final class SpaceMap {
                 rank += 1
             }
         }
-    }
-
-    /// The Space showing on each display right now.
-    ///
-    /// Read fresh from the WindowServer rather than off an instance: this
-    /// decides how a window gets focused, and a stale answer picks the wrong
-    /// route. With "Displays have separate Spaces" (the macOS default) more
-    /// than one Space is visible at a time, so the focused display's active
-    /// Space is not the whole answer.
-    static func visibleSpaces() -> Set<CGSSpaceID> {
-        guard let raw = CGSCopyManagedDisplaySpaces(CGSMainConnectionID())?.takeRetainedValue(),
-              let displays = raw as? [[String: Any]]
-        else { return [] }
-
-        var result: Set<CGSSpaceID> = []
-        for display in displays {
-            guard let current = display["Current Space"] as? [String: Any],
-                  let id = (current["ManagedSpaceID"] as? NSNumber)?.uint64Value
-            else { continue }
-            result.insert(id)
-        }
-        return result
     }
 
     func space(forWindow window: CGWindowID) -> CGSSpaceID? {

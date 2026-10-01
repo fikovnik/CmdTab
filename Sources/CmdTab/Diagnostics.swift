@@ -1,4 +1,10 @@
 import AppKit
+import os
+
+#if DIAGNOSTICS
+/// Read with `log stream --predicate 'subsystem == "net.fikovnik.cmdtab"'`.
+private let logger = Logger(subsystem: "net.fikovnik.cmdtab", category: "diagnostics")
+#endif
 
 @MainActor
 enum Diagnostics {
@@ -18,8 +24,10 @@ enum Diagnostics {
     static func note(_ text: @autoclosure () -> String) {
         #if DIAGNOSTICS
         let now = Date().timeIntervalSince1970
+        let message = text()
+        logger.notice("\(message, privacy: .public)")
         events.append(String(format: "%9.3f  %@",
-                             now.truncatingRemainder(dividingBy: 100_000), text()))
+                             now.truncatingRemainder(dividingBy: 100_000), message))
         if events.count > capacity { events.removeFirst(events.count - capacity) }
         #endif
     }

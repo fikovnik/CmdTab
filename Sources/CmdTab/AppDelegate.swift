@@ -37,6 +37,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
+                Focus.spaceDidChange()
                 // Rebuilding the map costs a CGS round trip per Space, so only
                 // pay it when the menu bar is actually showing the number.
                 if self.menuIcon == .desktopNumber {

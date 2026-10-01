@@ -6,8 +6,8 @@ struct WindowRef: Identifiable {
     let pid: pid_t
     let appName: String
     var title: String
-    /// `nil` for a window only the WindowServer can see, i.e. anything
-    /// off-Space. Focusing one goes through `WindowServer.raise`.
+    /// `nil` for a window that AX has not returned yet, for example a window
+    /// on a Space that the user has not visited.
     let element: AXUIElement?
     let icon: NSImage?
     /// "Desktop 2", "Full Screen", … Only populated in all-Spaces mode.
@@ -163,84 +163,6 @@ enum WindowEnumerator {
             result += axWindows(pid: pid, keeping: real[pid] ?? [])
         }
         return result
-    }
-
-    /// Bring a window to the front and give it keyboard focus, switching Spaces
-    /// and un-minimizing as needed.
-    static func focus(_ window: WindowRef) {
-        let app = NSRunningApplication(processIdentifier: window.pid)
-        if app?.isHidden == true { app?.unhide() }
-
-        // Which route to take is a question about where the window *is*, not
-        // about whether AX happens to hold an element for it. Those were the
-        // same question only by accident: a window that left its Space could
-        // never be walked again, so it kept no element. Windows now keep their
-        // element after leaving a Space, and an off-Space element accepts
-        // kAXMain and kAXRaise, reports success, and changes nothing, which
-        // leaves `activate` to come forward on whatever window the app last
-        // had main, on the Space you were already on.
-        //
-        // An unknown Space falls back to the element test, so this can only
-        // move a window onto the route it is proven to need.
-        let offSpace = WindowRegistry.shared.space(forWindow: window.id)
-            .map { !SpaceMap.visibleSpaces().contains($0) } ?? false
-
-        if offSpace {
-            // The only sequence known to reach a window on another Space:
-            //
-            //   1. front the process *and* the window, by window id
-            //   2. make it key with a synthetic click aimed off its corner
-            //   3. raise it inside the app's own window stack, over AX
-            //
-            // Deliberately no `activate()`. It is advisory since macOS 14, it
-            // is a no-op for an app that is already frontmost, which is the
-            // failing case of two windows of one app on different Spaces, and
-            // when it does act it goes to the Space of the app's own front
-            // window rather than the one asked for.
-            //
-            // Steps 1 and 2 need only the window id, so they work for a window
-            // AX cannot describe. Step 3 needs an element, and a *stale* one
-            // answers `.success` while doing nothing, so its result is logged
-            // separately from the others rather than folded in.
-            if let element = window.element {
-                AXUIElementSetAttributeValue(element, kAXMinimizedAttribute as CFString,
-                                             kCFBooleanFalse)
-            }
-            let raised = WindowServer.raise(window: window.id)
-            let axRaise = window.element.map {
-                AXUIElementPerformAction($0, kAXRaiseAction as CFString).rawValue
-            }
-            Diagnostics.note("focus offSpace id=\(window.id) raised=\(raised) axRaise=\(axRaise.map(String.init) ?? "no element") \(window.appName) | \(window.title)")
-            WindowRegistry.shared.promote(window.id)
-            return
-        }
-
-        guard let element = window.element else {
-            // On this Space but AX never described it. `activate` brings the
-            // app forward, the raise names the window.
-            app?.activate()
-            let raised = WindowServer.raise(window: window.id)
-            Diagnostics.note("focus server id=\(window.id) raised=\(raised) onSpace \(window.appName) | \(window.title)")
-            WindowRegistry.shared.promote(window.id)
-            return
-        }
-
-        var minimized: CFTypeRef?
-        if AXUIElementCopyAttributeValue(element, kAXMinimizedAttribute as CFString, &minimized) == .success,
-           (minimized as? Bool) == true {
-            AXUIElementSetAttributeValue(element, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
-        }
-
-        // Mark it main *before* activating, so the app comes forward on this
-        // window instead of flashing whatever its previous main window was.
-        let main = AXUIElementSetAttributeValue(element, kAXMainAttribute as CFString, kCFBooleanTrue)
-        let raise = AXUIElementPerformAction(element, kAXRaiseAction as CFString)
-        app?.activate()
-        Diagnostics.note("focus ax id=\(window.id) main=\(main.rawValue) raise=\(raise.rawValue) \(window.appName) | \(window.title)")
-
-        // Now the most recently used window, wherever it lives. Half of what
-        // makes the next cycle able to come back here.
-        WindowRegistry.shared.promote(window.id)
     }
 
     // MARK: - CGWindowList
