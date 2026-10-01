@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 # Create a self-signed code-signing certificate in the login keychain.
 #
-# Why: an ad-hoc signature's designated requirement is `cdhash H"..."`, which
-# changes on every build. macOS keys the Accessibility grant to that
-# requirement, so every rebuild silently drops the permission. Signing with a
-# real certificate makes the requirement `identifier "..." and certificate leaf
-# H"..."` instead, which is stable for the life of the certificate.
+# macOS keeps the Accessibility permission for a designated requirement. The
+# requirement of an ad-hoc signature is `cdhash H"..."`, which changes on each
+# build. Thus, each build loses the permission. With a certificate, the
+# requirement is `identifier "..." and certificate leaf H"..."`. This does not
+# change while the certificate is valid.
 #
-# Idempotent: does nothing if the certificate already exists.
+# If the certificate exists, the script does nothing.
 set -euo pipefail
 
 NAME="${1:-CmdTab Self-Signed}"
 KEYCHAIN="$HOME/Library/Keychains/login.keychain-db"
-# LibreSSL, not Homebrew OpenSSL 3: its default PKCS#12 encryption is the one
-# `security import` can actually read, with no -legacy flag needed.
+# Use LibreSSL, not Homebrew OpenSSL 3. `security import` can read the default
+# PKCS#12 encryption of LibreSSL without the -legacy flag.
 OPENSSL=/usr/bin/openssl
 
 if security find-certificate -c "$NAME" >/dev/null 2>&1; then
@@ -43,13 +43,13 @@ CNF
 "$OPENSSL" req -x509 -newkey rsa:2048 -sha256 -days 7300 -nodes \
     -config "$TMP/openssl.cnf" -keyout "$TMP/key.pem" -out "$TMP/cert.pem" 2>/dev/null
 
-# `security import` rejects an empty-password PKCS#12 ("MAC verification
-# failed"), so use a throwaway one; the file never leaves $TMP.
+# `security import` refuses a PKCS#12 file with an empty password ("MAC
+# verification failed"). Thus, use a random password. The file stays in $TMP.
 PASS="$(uuidgen)"
 "$OPENSSL" pkcs12 -export -inkey "$TMP/key.pem" -in "$TMP/cert.pem" \
     -name "$NAME" -out "$TMP/identity.p12" -passout "pass:$PASS"
 
-# -A lets codesign use the private key without a keychain prompt on every build.
+# With -A, codesign can use the private key without a keychain prompt.
 security import "$TMP/identity.p12" -k "$KEYCHAIN" -P "$PASS" -A
 
 echo "created certificate '$NAME'"

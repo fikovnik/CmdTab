@@ -2,16 +2,15 @@ import AppKit
 import ApplicationServices
 import CmdTabConfig
 
-/// Reading and writing the focused window's frame over the Accessibility API.
+/// Reads and writes the frame of the focused window with AX.
 ///
-/// Everything returned and accepted here is in the top-left origin space AX
-/// and `CGWindowList` use, so it lines up with `Layout` without further
-/// conversion. `NSScreen` rects are the one exception and are flipped on the
-/// way through `visibleFrame`.
+/// All rects here use the coordinates of AX and `CGWindowList`, with the origin
+/// at the top left. `Layout` uses the same coordinates. `visibleFrame` flips
+/// the `NSScreen` rects, which have the origin at the bottom left.
 @MainActor
 enum WindowGeometry {
-    /// Same 100 ms budget the switcher uses, for the same reason: this runs on
-    /// the event tap callback, and a tap that overruns gets disabled.
+    /// The AX timeout. This code runs in the event tap callback, and the system
+    /// disables a slow tap.
     private static let timeout: Float = 0.1
 
     struct Target {
@@ -54,17 +53,15 @@ enum WindowGeometry {
         return CGRect(origin: origin, size: size)
     }
 
-    /// Position, size, then position again.
+    /// Sets the position, then the size, then the position again.
     ///
-    /// Two passes because an app may clamp the size it is given while the
-    /// window is still on the old screen, and may shift the window when the
-    /// size finally changes. Moving first, then sizing, then correcting the
-    /// position is what survives both.
+    /// An app can limit the size to the old screen while the window is still
+    /// on that screen. An app can also move the window when the size changes.
+    /// This sequence gives the correct frame in the two cases.
     static func setFrame(_ rect: CGRect, on target: Target) {
-        // `AXEnhancedUserInterface` makes position and size writes misbehave in
-        // AppKit apps, and it gets switched on by any assistive client,
-        // including this app's own debug diagnostics, which never turns it back
-        // off. Take it down for the duration and restore it.
+        // If `AXEnhancedUserInterface` is on, AppKit apps do not set the
+        // position and the size correctly. An assistive app can set it and not
+        // clear it. Thus, clear it for the change, then restore it.
         let enhanced = axBool(target.app, "AXEnhancedUserInterface")
         if enhanced == true {
             setAXBool(target.app, "AXEnhancedUserInterface", false)
@@ -78,8 +75,7 @@ enum WindowGeometry {
         setPosition(rect.origin, on: target.window)
     }
 
-    /// Spelled out because `kAXFullScreenAttribute` is not exported to Swift,
-    /// the same way `AXTrustedCheckOptionPrompt` is spelled out in AppDelegate.
+    /// A string, because Swift does not import `kAXFullScreenAttribute`.
     private static let fullScreenAttribute = "AXFullScreen"
 
     static func isFullScreen(_ window: AXUIElement) -> Bool? {
@@ -90,29 +86,30 @@ enum WindowGeometry {
         setAXBool(window, fullScreenAttribute, on)
     }
 
-    /// The visible frame (menu bar and Dock excluded) of the screen holding
-    /// most of `windowFrame`, in AX coordinates.
+    /// The visible frame of the screen that contains most of `windowFrame`, in
+    /// AX coordinates. The visible frame does not include the menu bar and the
+    /// Dock.
     static func visibleFrame(containing windowFrame: CGRect) -> CGRect? {
         guard let primaryMaxY = primaryMaxY() else { return nil }
         let screens = NSScreen.screens.map {
             (screen: $0, frame: Layout.flip($0.frame, primaryMaxY: primaryMaxY))
         }
-        // Largest overlap, because a window straddling two displays belongs to
-        // whichever one it is mostly on, the same rule macOS uses.
+        // A window on two displays belongs to the display with the largest
+        // part of the window, as in macOS.
         let best = screens.max {
             $0.frame.intersection(windowFrame).area < $1.frame.intersection(windowFrame).area
         }
         guard let best else { return nil }
         if best.frame.intersection(windowFrame).isNull {
-            // Entirely off every display. Fall back to wherever the keyboard is.
+            // The window is on no display. Use the screen with the key window.
             guard let main = NSScreen.main else { return nil }
             return Layout.flip(main.visibleFrame, primaryMaxY: primaryMaxY)
         }
         return Layout.flip(best.screen.visibleFrame, primaryMaxY: primaryMaxY)
     }
 
-    /// The height of the display whose origin is zero, which is the reference
-    /// for every flip between AppKit and AX coordinates.
+    /// The height of the display at the zero origin. Each flip between AppKit
+    /// and AX coordinates uses it.
     static func primaryMaxY() -> CGFloat? {
         let zero = NSScreen.screens.first { $0.frame.origin == .zero }
         return (zero ?? NSScreen.screens.first)?.frame.maxY
@@ -161,6 +158,6 @@ enum WindowGeometry {
 }
 
 private extension CGRect {
-    /// `.null` has an infinite-ish area, so guard it before comparing.
+    /// Zero for `.null`, the result of an intersection with no overlap.
     var area: CGFloat { isNull ? 0 : width * height }
 }

@@ -8,8 +8,8 @@ import CmdTabModel
 /// 2. Make the app the front process, with this window as the key window
 ///    (`WindowServer.front`).
 /// 3. Raise the window in the window stack of its app (`kAXRaiseAction`).
-/// 4. If the window is on a different Space, restore the front app of the
-///    Space that the user left (alt-tab #4507).
+/// 4. If the user left a Space that is now not visible, restore the front app
+///    of that Space (alt-tab #4507).
 ///
 /// Do not use `NSRunningApplication.activate()`. Since macOS 14 it is only a
 /// request, and macOS can refuse it from an app that is not active. CmdTab is

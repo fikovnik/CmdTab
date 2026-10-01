@@ -3,8 +3,8 @@ import Carbon.HIToolbox
 import CmdTabConfig
 
 #if DIAGNOSTICS
-/// Milliseconds per tick of `mach_absolute_time`, which is the clock
-/// `CGEvent.timestamp` is stamped from.
+/// Milliseconds per tick of `mach_absolute_time`, the clock of
+/// `CGEvent.timestamp`.
 private let millisecondsPerTick: Double = {
     var info = mach_timebase_info_data_t()
     mach_timebase_info(&info)
@@ -16,25 +16,23 @@ private let tapCallback: CGEventTapCallBack = { _, type, event, refcon in
     guard let refcon else { return Unmanaged.passUnretained(event) }
     let tap = Unmanaged<HotkeyTap>.fromOpaque(refcon).takeUnretainedValue()
 
-    // Decode here, before hopping to the main actor: the switcher only needs the
-    // key and the modifiers, and CGEvent is not Sendable, so keeping it on this
-    // side of the boundary is what lets the hop be checked rather than excused.
+    // Read the key and the modifiers before the main actor hop. `CGEvent` is
+    // not `Sendable`, and the switcher needs only these two values.
     let flags = event.flags
     let key = Int(event.getIntegerValueField(.keyboardEventKeycode))
     #if DIAGNOSTICS
-    // How long this event sat in the queue before the main thread got to it.
-    // The tap, the reveal timer and the window scan all share that thread, so a
-    // late event is also a HUD that could not have appeared on time.
+    // The time that the event waited before the main thread got it. The tap,
+    // the reveal timer and the window scan use the same thread. Thus, a late
+    // event also means a late HUD.
     //
-    // Signed, and floored: a timestamp can read a few ticks *ahead* of
-    // `mach_absolute_time`, which an unsigned subtraction turns into 2^64 ticks
-    // of apparent lateness.
+    // A timestamp can be a few ticks later than `mach_absolute_time`. Thus,
+    // the difference is signed, with a minimum of zero.
     let ticks = Int64(bitPattern: mach_absolute_time() &- event.timestamp)
     let lateness = ticks > 0 ? Double(ticks) * millisecondsPerTick : 0
     #endif
 
-    // `start` installs the run loop source on the main run loop, so this
-    // callback is always delivered on the main thread.
+    // `start` adds the run loop source to the main run loop. Thus, this
+    // callback always runs on the main thread.
     var verdict = HotkeyTap.Verdict.pass
     MainActor.assumeIsolated {
         #if DIAGNOSTICS
@@ -51,11 +49,11 @@ private let tapCallback: CGEventTapCallBack = { _, type, event, refcon in
 
 @MainActor
 final class HotkeyTap {
-    /// What the tap should do with an event once the switcher has seen it.
+    /// What the tap does with an event after `handle`.
     enum Verdict: Sendable {
-        /// Hand the event on to the frontmost app.
+        /// Send the event to the front app.
         case pass
-        /// Drop it, so the app never sees half a chord.
+        /// Discard the event, so that the app does not get a part of a chord.
         case swallow
     }
 
@@ -64,12 +62,11 @@ final class HotkeyTap {
     private var machPort: CFMachPort?
     private var source: CFRunLoopSource?
 
-    /// What the config bound. Replaced wholesale on reload.
+    /// The chords from the config. A reload replaces the full value.
     var bindings = Bindings()
 
-    /// The modifiers of the trigger that opened the current cycle. Releasing
-    /// any of them is what commits. That used to be hardcoded to Cmd, and is
-    /// now whatever the trigger names.
+    /// The modifiers of the trigger that started the current cycle. When the
+    /// user releases one of them, the switcher commits.
     private var activeHold: Chord.Modifiers?
 
     init(switcher: Switcher, host: any WindowActions) {
@@ -99,8 +96,8 @@ final class HotkeyTap {
         return true
     }
 
-    /// Tear the tap down. `start` hands the tap an *unretained* pointer to
-    /// `self`, so the tap must never outlive this object.
+    /// Stops the tap. `start` gives the tap an unretained pointer to `self`.
+    /// Thus, the tap must not live longer than this object.
     func stop() {
         guard let machPort else { return }
         CGEvent.tapEnable(tap: machPort, enable: false)
@@ -111,7 +108,8 @@ final class HotkeyTap {
     }
 
     fileprivate func handle(type: CGEventType, flags: CGEventFlags, key: Int) -> Verdict {
-        // The system disables a tap that ever takes too long. Just turn it back on.
+        // The system disables a tap that is too slow, and also on some user
+        // input. Enable the tap again.
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             Diagnostics.note("tap disabled (type \(type.rawValue)), re-enabling")
             if let machPort { CGEvent.tapEnable(tap: machPort, enable: true) }
@@ -122,18 +120,16 @@ final class HotkeyTap {
         let shift = held.contains(.shift)
 
         if type == .flagsChanged {
-            // Releasing the trigger's modifiers is what commits the selection.
             if switcher.isCycling, !stillHeld(held) { endCycle() }
             return .pass
         }
 
         guard type == .keyDown || type == .keyUp else { return .pass }
 
-        // A key arriving without the trigger held while cycling means the
-        // release that should have ended the cycle never got here. The system
-        // drops events for as long as it has the tap disabled. Commit what was
-        // selected and let the key through, rather than swallowing the keyboard
-        // until the next trigger.
+        // A key without the trigger modifiers during a cycle means that the
+        // tap did not get the release. The system discards events while the
+        // tap is disabled. Commit the selection and pass the key. Else the
+        // tap discards all keys until the next trigger.
         if switcher.isCycling, !stillHeld(held) {
             Diagnostics.note("missed trigger release, recovering")
             endCycle()
@@ -142,7 +138,7 @@ final class HotkeyTap {
 
         if switcher.isCycling {
             if type == .keyDown { cycle(key: key, shift: shift) }
-            // Swallow everything while the switcher owns the keyboard.
+            // During a cycle, the front app gets no key events.
             return .swallow
         }
 
@@ -150,8 +146,8 @@ final class HotkeyTap {
 
         let chord = Chord(keyCode: UInt16(key), modifiers: held)
 
-        // Shift is not part of a switcher trigger. It reverses direction, so
-        // try the chord as typed, then again without Shift.
+        // Shift is not part of a switcher trigger. Shift reverses the
+        // direction. Thus, find the chord as typed, then without Shift.
         if let mode = bindings.switchers[chord] {
             begin(mode, trigger: chord, reversed: false)
             return .swallow
@@ -164,9 +160,8 @@ final class HotkeyTap {
             }
         }
 
-        // Any one-shot binding: tiling, a desktop switch, shell, AppleScript.
-        // Swallowed so the chord does not reach the focused app as well. A
-        // chord the config did not bind falls through untouched.
+        // A binding with one action, for example a tile or a shell command.
+        // Discard the chord, so that the focused app does not also get it.
         if let command = bindings.locals[chord] {
             command.run(on: host)
             return .swallow
@@ -185,7 +180,6 @@ final class HotkeyTap {
         activeHold = nil
     }
 
-    /// Whether every modifier the trigger named is still down.
     private func stillHeld(_ held: Chord.Modifiers) -> Bool {
         guard let activeHold else { return false }
         return held.isSuperset(of: activeHold)
@@ -209,10 +203,9 @@ final class HotkeyTap {
         case kVK_PageUp:
             switcher.step(-switcher.pageSize, wrap: false)
         default:
-            // The trigger that opened this cycle steps forward. The other one
-            // steps back. That is what makes Cmd+` walk the all-windows list
-            // in reverse, and it now follows from the bindings rather than
-            // from a hardcoded pair of key codes.
+            // The trigger key of this cycle steps forward. The trigger key of
+            // the other mode steps back. For example, Cmd+` moves back in the
+            // all-windows list.
             guard let mode = bindings.switchers.first(where: { $0.key.keyCode == UInt16(key) })?.value
             else { break }
             let direction = mode == switcher.mode ? 1 : -1
@@ -220,9 +213,9 @@ final class HotkeyTap {
         }
     }
 
-    /// Only the modifiers a tap can match on. `fn` is absent by construction:
-    /// arrow and function keys set it implicitly, so matching on it would be
-    /// wrong either way. See `Chord.Modifiers.tapMatchable`.
+    /// Only the modifiers that a chord can use. The arrow keys and the
+    /// function keys set `fn` automatically. Thus, `fn` is not a modifier
+    /// here. See `Chord.Modifiers.tapMatchable`.
     private static func modifiers(_ flags: CGEventFlags) -> Chord.Modifiers {
         var m = Chord.Modifiers()
         if flags.contains(.maskShift) { m.insert(.shift) }

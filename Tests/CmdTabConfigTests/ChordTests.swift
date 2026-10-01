@@ -33,8 +33,8 @@ final class ChordTests: XCTestCase {
         assertThrows(Chord.ParseError.empty) { try Chord(parsing: "") }
     }
 
-    /// The encoding macOS itself uses, checked against entries read out of a
-    /// live `com.apple.symbolichotkeys` and Apple's `DefaultShortcutsTable.xml`.
+    /// The expected values come from `com.apple.symbolichotkeys` on a real Mac
+    /// and from the Apple `DefaultShortcutsTable.xml`.
     func testEncodingMatchesWhatMacOSStores() throws {
         let cases: [(String, UInt16, UInt16, UInt32)] = [
             ("ctrl-alt-cmd-1", 49, 18, 1_835_008),

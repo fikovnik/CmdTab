@@ -2,11 +2,11 @@ import XCTest
 
 @testable import CmdTabConfig
 
-/// The real geometry of the machine this was built on: a 2560x1440 main
-/// display with a 30pt menu bar, plus a rotated portrait display sitting to its
-/// left and offset downward. The portrait screen is the one that catches
-/// coordinate-conversion mistakes, because its AppKit origin is negative on
-/// both axes and its top edge is *above* the main display's.
+/// A real two-display setup. The main display is 2560x1440 with a 30-point menu
+/// bar. A rotated portrait display is on its left, and its bottom edge is lower.
+/// The portrait display finds coordinate conversion errors. Its AppKit origin is
+/// negative on both axes, and its top edge is *above* the top edge of the main
+/// display.
 private enum Fixture {
     static let primaryMaxY: CGFloat = 1440
 
@@ -14,15 +14,15 @@ private enum Fixture {
     static let mainAppKitVisible = CGRect(x: 0, y: 0, width: 2560, height: 1410)
     static let portraitAppKitFrame = CGRect(x: -1440, y: -580, width: 1440, height: 2560)
 
-    /// In AX coordinates.
+    /// These values use AX coordinates.
     static var mainVisible: CGRect { Layout.flip(mainAppKitVisible, primaryMaxY: primaryMaxY) }
     static var portrait: CGRect { Layout.flip(portraitAppKitFrame, primaryMaxY: primaryMaxY) }
 }
 
 final class FlipTests: XCTestCase {
     func testMainDisplayVisibleFrameLandsUnderTheMenuBar() {
-        // visibleFrame excludes the 30pt menu bar, which is at the *top*, so in
-        // top-left coordinates the rect must start at y=30, not y=0.
+        // `visibleFrame` does not include the 30-point menu bar at the *top*.
+        // Thus, in top-left coordinates, the rect starts at y=30, not y=0.
         XCTAssertEqual(Fixture.mainVisible, CGRect(x: 0, y: 30, width: 2560, height: 1410))
     }
 
@@ -32,8 +32,8 @@ final class FlipTests: XCTestCase {
     }
 
     func testPortraitDisplaySitsAboveAndLeftOfTheMainOne() {
-        // AppKit top edge is -580 + 2560 = 1980, i.e. 540pt above the main
-        // display's top, so AX y must be -540.
+        // The AppKit top edge is -580 + 2560 = 1980. This is 540 points above the
+        // top of the main display. Thus, the AX y value is -540.
         XCTAssertEqual(Fixture.portrait, CGRect(x: -1440, y: -540, width: 1440, height: 2560))
         XCTAssertEqual(Fixture.portrait.maxY, 2020)
     }
@@ -76,10 +76,9 @@ final class LayoutTests: XCTestCase {
         }
     }
 
-    /// The headline behaviour: half, two thirds, one third, back to half.
     func testRepeatedPressesCycleTheFraction() {
         let v = Fixture.mainVisible
-        var window = CGRect(x: 900, y: 400, width: 600, height: 500)   // floating
+        var window = CGRect(x: 900, y: 400, width: 600, height: 500)   // not tiled
 
         window = Layout.next(edge: .left, window: window, in: v)
         XCTAssertEqual(window.width, 1280, "first press snaps to a half")
@@ -113,17 +112,18 @@ final class LayoutTests: XCTestCase {
     func testTheOppositeEdgeSnapsRatherThanCycling() {
         let v = Fixture.mainVisible
         let leftHalf = Layout.frame(edge: .left, fraction: 0.5, in: v)
-        // A left half is not a right half, so pressing right must snap to a
-        // right half rather than advance to two thirds.
+        // A left half is not a right half. Thus, a press on the right edge gives
+        // a right half, not two thirds.
         let result = Layout.next(edge: .right, window: leftHalf, in: v)
         XCTAssertEqual(result, Layout.frame(edge: .right, fraction: 0.5, in: v))
     }
 
-    /// A terminal resizes in whole character cells, so it never lands exactly.
+    /// A terminal resizes in whole character cells, so it does not stop on an
+    /// exact fraction.
     func testAWindowAFewPointsOffStillCounts() {
         let v = Fixture.mainVisible
         var nearly = Layout.frame(edge: .left, fraction: 0.5, in: v)
-        nearly.size.width -= 9        // about one Ghostty cell
+        nearly.size.width -= 9        // approximately one Ghostty cell
         nearly.size.height -= 14
         let result = Layout.next(edge: .left, window: nearly, in: v)
         XCTAssertEqual(result.width, (2560.0 * 2.0 / 3.0).rounded(),
@@ -148,16 +148,16 @@ final class LayoutTests: XCTestCase {
         }
     }
 
-    /// The window this was added for: a 120x30 Ghostty is 1210x672, and the
-    /// main display's visible frame starts below the 30pt menu bar.
+    /// A 120x30 Ghostty window is 1210x672 points. The visible frame of the main
+    /// display starts below the 30-point menu bar.
     func testCenteringMatchesTheHandComputedFrame() {
         XCTAssertEqual(Layout.centered(CGRect(x: 0, y: 0, width: 1210, height: 672),
                                        in: Fixture.mainVisible),
                        CGRect(x: 675, y: 399, width: 1210, height: 672))
     }
 
-    /// Unlike an edge, a centered fraction constrains both axes: there is no
-    /// one direction for it to be flush with.
+    /// A centered fraction changes both axes, because it is not flush with an
+    /// edge.
     func testCenteredFractionsShrinkBothAxesAndStayCentered() {
         for visible in [Fixture.mainVisible, Fixture.portrait] {
             for fraction in Layout.fractions {
@@ -170,10 +170,9 @@ final class LayoutTests: XCTestCase {
         }
     }
 
-    /// The headline behaviour of tile:center: move first, resize after.
     func testFirstCenterOnlyMovesThenPressesCycleTheFraction() {
         let v = Fixture.mainVisible
-        var window = CGRect(x: 7, y: 13, width: 1210, height: 672)   // floating
+        var window = CGRect(x: 7, y: 13, width: 1210, height: 672)   // not tiled
 
         window = Layout.nextCentered(window: window, in: v)
         XCTAssertEqual(window, CGRect(x: 675, y: 399, width: 1210, height: 672),
@@ -192,9 +191,8 @@ final class LayoutTests: XCTestCase {
         XCTAssertEqual(window, Layout.centered(fraction: 1.0 / 2.0, in: v), "then back to a half")
     }
 
-    /// The trap this hit first: an already-centered window whose size is none of
-    /// the fractions has nowhere to move to, so it must enter the cycle rather
-    /// than sit still forever.
+    /// A centered window with a size that is not a fraction cannot move to a new
+    /// position. Thus, it must start the cycle and not stay at the same frame.
     func testAnAlreadyCenteredWindowEntersTheCycleInsteadOfStandingStill() {
         let v = Fixture.mainVisible
         let odd = Layout.centered(CGRect(x: 0, y: 0, width: 1210, height: 672), in: v)

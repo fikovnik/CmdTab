@@ -8,8 +8,8 @@ if let flag = arguments.firstIndex(of: "--render-hud") {
 }
 
 #if DIAGNOSTICS
-// Same report the menu item writes, on stdout. The menu needs a GUI session.
-// This does not, so it works over ssh and in a build script.
+// Writes the diagnostics report to stdout. Unlike the menu item, this does
+// not need a GUI session. Thus, it works over ssh and in a build script.
 if arguments.contains("--report") {
     _ = NSApplication.shared
     print(Diagnostics.report())

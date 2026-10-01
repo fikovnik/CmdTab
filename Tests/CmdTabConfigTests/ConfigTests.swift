@@ -2,7 +2,6 @@ import XCTest
 
 @testable import CmdTabConfig
 
-/// Stands in for the app target, which is where the real sink lives.
 final class RecordingSink: BindingSink {
     var locals: [(chord: Chord, command: any LocalCommand)] = []
     var switchers: [(chord: Chord, mode: SwitchMode)] = []
@@ -15,7 +14,6 @@ final class RecordingSink: BindingSink {
     }
 }
 
-/// Records what the app target would have been asked to do.
 @MainActor
 final class RecordingHost: WindowActions {
     var tiled: [WindowEdge] = []
@@ -74,8 +72,8 @@ final class ActionTests: XCTestCase {
                             as? SwitchDesktopAction)?.target, .step(1))
     }
 
-    /// The name is what a duplicate-chord error prints, so it has to round-trip
-    /// back to the spelling the config used.
+    /// The duplicate-chord error shows the name. Thus, the name must be the
+    /// same as the spelling in the config.
     func testNamesRoundTripToTheConfigSpelling() throws {
         for spec in ["tile:left", "tile:bottom", "tile:center", "toggle-maximize",
                      "switch-desktop:9", "switch-desktop:previous",
@@ -101,7 +99,7 @@ final class ActionTests: XCTestCase {
     func testUnknownAndEmptySpecsAreErrors() {
         for spec in ["left-half", "desktop-1", "space-previous", "tile-left"] {
             assertThrows(Config.ActionError.unknownAction(spec)) {
-                _ = try Config.action(for: spec)   // the old, removed names
+                _ = try Config.action(for: spec)   // names from an earlier config format
             }
         }
         assertThrows(Config.ActionError.emptyCommand("shell")) {
@@ -109,8 +107,8 @@ final class ActionTests: XCTestCase {
         }
     }
 
-    /// A known action with a parameter that names nothing reports what it
-    /// wanted, rather than the bare "unknown action" a typo used to get.
+    /// A known action with an incorrect parameter must tell the expected values,
+    /// not only "unknown action".
     func testBadParametersSayWhatWasExpected() {
         for value in ["sideways", "", "Left"] {
             assertThrows(Config.ActionError.badParameter("tile", value,
@@ -210,7 +208,6 @@ final class ConfigFileTests: XCTestCase {
                        "open -a Finder ~")
         XCTAssertTrue(binding(config, "ctrl-alt-cmd-s")?.action is AppleScriptAction)
 
-        // The overridden switcher moved. The unmentioned one kept its default.
         XCTAssertEqual((binding(config, "alt-tab")?.action as? SwitcherAction)?.mode, .allWindows)
         XCTAssertNil(binding(config, "cmd-tab"))
         XCTAssertEqual((binding(config, "cmd-grave")?.action as? SwitcherAction)?.mode, .currentApp)
@@ -226,7 +223,6 @@ final class ConfigFileTests: XCTestCase {
                       "\(config.errors)")
         XCTAssertTrue(config.errors.contains { $0.contains("unknown field \"triger\"") },
                       "\(config.errors)")
-        // ...and the switcher still falls back to its default trigger.
         XCTAssertTrue(binding(config, "cmd-tab")?.action is SwitcherAction)
     }
 
@@ -243,12 +239,11 @@ final class ConfigFileTests: XCTestCase {
         """#)
         XCTAssertEqual(config.errors.count, 3, "\(config.errors)")
         XCTAssertNotNil(binding(config, "ctrl-alt-cmd-h"))
-        // The switcher defaults survive a broken keys table.
         XCTAssertNotNil(binding(config, "cmd-tab"))
     }
 
-    /// Now that CmdTab matches every chord itself, `fn` is unusable
-    /// everywhere rather than only outside the system-handled actions.
+    /// CmdTab matches all chords in its own event tap. Thus, `fn` is not valid
+    /// in any section.
     func testFunctionIsRefusedEverywhere() {
         let config = parse(#"""
         {
@@ -259,7 +254,6 @@ final class ConfigFileTests: XCTestCase {
         XCTAssertEqual(config.errors.count, 3, "\(config.errors)")
         XCTAssertTrue(config.errors.allSatisfy { $0.contains("fn cannot be bound") })
         XCTAssertNil(binding(config, "fn-ctrl-f"))
-        // The switcher falls back to its default, so the keyboard still works.
         XCTAssertTrue(binding(config, "cmd-grave")?.action is SwitcherAction)
     }
 
@@ -276,8 +270,8 @@ final class ConfigFileTests: XCTestCase {
         """#)
         XCTAssertEqual(config.errors.count, 1, "\(config.errors)")
         XCTAssertTrue(config.errors[0].contains("already bound to"))
-        // Exactly one of the two spellings wins. Which one is not interesting,
-        // only that the chord is bound once.
+        // The test does not check which spelling wins. Only one binding for the
+        // chord must exist.
         let chord = try? Chord(parsing: "ctrl-alt-cmd-h")
         XCTAssertEqual(config.bindings.filter { $0.chord == chord }.count, 1)
     }

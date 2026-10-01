@@ -1,61 +1,65 @@
 import Foundation
 
-/// Which window list a switcher cycle walks.
+/// The window list that a switcher cycle goes through.
 public enum SwitchMode: Sendable {
-    /// Every window on the current Space, across all screens.
+    /// All windows on all Spaces.
     case allWindows
-    /// Windows of the app that was frontmost when cycling began.
+    /// The windows of the app that was frontmost when the cycle started.
     case currentApp
 }
 
-/// What CmdTab can do to a window or a Space.
+/// The operations that CmdTab can do on a window or a Space.
 ///
-/// Implemented by the app target, which owns the Accessibility API and the
-/// WindowServer SPI. Actions reach it through this protocol rather than doing
-/// the work themselves, which keeps the action vocabulary (the part with a
-/// config format attached to it) free of AppKit and testable against a mock.
+/// The app target implements this protocol because it owns the Accessibility
+/// API and the WindowServer private API. The actions call this protocol and do
+/// not do the work themselves. Thus, the actions do not use AppKit, and tests
+/// can use a mock host.
 @MainActor
 public protocol WindowActions: AnyObject {
-    /// Move the focused window to `edge`, cycling its fraction if it is
-    /// already there.
+    /// Move the focused window to `edge`. If the window is already at `edge`,
+    /// change to the next fraction.
     func tile(_ edge: WindowEdge)
-    /// Move the focused window to the middle of its screen, keeping its size.
+    /// Move the focused window to the center of its screen. See
+    /// `Layout.nextCentered(window:in:)`.
     func center()
-    /// Native full screen, the green-button behaviour.
+    /// Toggle native full screen, as the green window button does.
     func toggleFullScreen()
-    /// Fill the screen's visible frame, or put the window back if it already does.
+    /// Make the window fill the visible frame of its screen. If the window
+    /// already fills it, move the window to its previous frame.
     func toggleMaximize()
-    /// Switch the focused display to its `number`-th desktop, 1-based.
+    /// Switch the focused display to desktop `number`. The first desktop is 1.
     func activateDesktop(_ number: Int)
-    /// Move one desktop left or right on the focused display.
+    /// Move one desktop to the left or to the right on the focused display.
     func stepDesktop(_ offset: Int)
 }
 
-/// Where a bound chord ends up. Implemented by the app target, which owns the
-/// event tap. The actions themselves stay ignorant of it, which is what lets
-/// them be tested against a recording stand-in.
+/// The destination of a bound chord. The app target implements this protocol
+/// because it owns the event tap. The actions do not know the event tap. Thus,
+/// tests can use a recording sink.
 public protocol BindingSink: AnyObject {
-    /// Keep the chord in CmdTab's event tap and run this when it fires.
+    /// Match the chord in the CmdTab event tap. When the user presses the
+    /// chord, run `command`.
     func registerLocal(chord: Chord, command: any LocalCommand)
-    /// Keep the chord in CmdTab's event tap as a switcher trigger.
+    /// Match the chord in the CmdTab event tap as a switcher trigger.
     func registerSwitcher(chord: Chord, mode: SwitchMode)
 }
 
-/// Something CmdTab runs itself when a chord fires.
+/// A command that CmdTab runs itself when the user presses a chord.
 public protocol LocalCommand: AnyObject, Sendable {
-    /// Called straight from the event tap callback, so this must not block.
+    /// The event tap callback calls this function directly. Thus, it must not
+    /// block.
     @MainActor func run(on host: any WindowActions)
 }
 
+/// An action that the config can bind to a chord.
 public protocol Action: AnyObject, Sendable {
-    /// How the action is written in the config, for error messages.
+    /// The spelling of the action in the config. Error messages use it.
     var name: String { get }
     func bind(_ chord: Chord, into sink: any BindingSink)
 }
 
-/// `tile:left` and friends. Repeated presses cycle the fraction, so the
-/// direction is the whole parameter: how much of the screen it takes is a
-/// function of how many times you have pressed it, not of the config.
+/// `tile:left`, `tile:right`, `tile:top` and `tile:bottom`. Each press of the
+/// chord changes to the next fraction. Thus, the edge is the only parameter.
 public final class TileAction: Action, LocalCommand {
     public let edge: WindowEdge
     public var name: String { "tile:\(edge.rawValue)" }
@@ -69,10 +73,9 @@ public final class TileAction: Action, LocalCommand {
     public func run(on host: any WindowActions) { host.tile(edge) }
 }
 
-/// `tile:center`. Spelled as a tile because that is where you look for it,
-/// but it is not a `WindowEdge`: centering keeps the window's size and only
-/// moves it, so there is no direction to be flush with and no fraction to
-/// cycle through on a second press.
+/// `tile:center`. The config spells it as a tile action, but it is not a
+/// `WindowEdge`. A centered window is not flush with an edge, and the first
+/// press keeps the window size.
 public final class CenterAction: Action, LocalCommand {
     public var name: String { "tile:center" }
 
@@ -85,8 +88,7 @@ public final class CenterAction: Action, LocalCommand {
     public func run(on host: any WindowActions) { host.center() }
 }
 
-/// `toggle-fullscreen` / `toggle-maximize`. Two shapes of the same idea, so one
-/// class with a flag rather than two near-identical ones.
+/// `toggle-fullscreen` and `toggle-maximize`.
 public final class ToggleAction: Action, LocalCommand {
     public enum Kind: String, Sendable { case fullscreen, maximize }
 
@@ -107,12 +109,13 @@ public final class ToggleAction: Action, LocalCommand {
     }
 }
 
-/// `switch-desktop:N`, `switch-desktop:previous`, `switch-desktop:next`.
+/// `switch-desktop:N`, `switch-desktop:previous` and `switch-desktop:next`.
 public final class SwitchDesktopAction: Action, LocalCommand {
     public enum Target: Sendable, Equatable {
-        /// 1-based, within the desktops of whichever display has focus.
+        /// A desktop number on the focused display. The first desktop is 1.
         case desktop(Int)
-        /// One desktop along, negative for left. Clamped, not wrapped.
+        /// A step of one desktop. A negative value moves to the left. The step
+        /// does not wrap at the first or the last desktop.
         case step(Int)
     }
 
@@ -138,8 +141,8 @@ public final class SwitchDesktopAction: Action, LocalCommand {
     }
 }
 
-/// `shell:<command>` runs through `/bin/sh -c`, so pipes, globs and `~` work
-/// the way they do in a terminal.
+/// `shell:<command>`. The command runs through `/bin/sh -c`. Thus, pipes, globs
+/// and `~` work as in a terminal.
 public final class ShellAction: Action, LocalCommand {
     public let command: String
     public var name: String { "shell:\(command)" }
@@ -155,10 +158,11 @@ public final class ShellAction: Action, LocalCommand {
     }
 }
 
-/// `applescript:<source>` runs through `osascript` rather than in-process
-/// `NSAppleScript`, which keeps it on the same code path as `shell:` and off
-/// the main thread. TCC still attributes the Apple Event to CmdTab, because
-/// CmdTab is the responsible process for the child.
+/// `applescript:<source>`. The script runs through `osascript`, not through
+/// `NSAppleScript` in the CmdTab process. Thus, it uses the same code path as
+/// `shell:` and does not run on the main thread. TCC records CmdTab as the
+/// sender of the Apple Event, because CmdTab is the responsible process of the
+/// child.
 public final class AppleScriptAction: Action, LocalCommand {
     public let source: String
     public var name: String { "applescript:\(source)" }
@@ -174,9 +178,9 @@ public final class AppleScriptAction: Action, LocalCommand {
     }
 }
 
-/// A switcher trigger. Parsed from a `switch-*` section's `trigger` rather than
-/// from a `keys` entry, because a switcher is a subsystem with settings rather
-/// than a one-shot action, but it is bound through the same sink.
+/// A switcher trigger. The config sets it in the `trigger` field of a
+/// `switch-*` section, not in `keys`, because a switcher has its own settings.
+/// It uses the same sink as the other actions.
 public final class SwitcherAction: Action {
     public let mode: SwitchMode
     public var name: String { mode == .allWindows ? "switch-all-windows" : "switch-current-app" }
@@ -188,8 +192,8 @@ public final class SwitcherAction: Action {
     }
 }
 
-/// Fire and forget. Never waits: the caller is on the event tap callback, and a
-/// tap that overruns its budget gets disabled by the system.
+/// Starts a process and does not wait for it. The caller is the event tap
+/// callback. If the callback is too slow, the system disables the tap.
 enum Spawn {
     static func run(_ argv: [String], label: String) {
         DispatchQueue.global(qos: .userInitiated).async {
@@ -207,9 +211,9 @@ enum Spawn {
     }
 }
 
-/// Where this target reports problems. The app target points it at
-/// `Diagnostics.note` so config and command failures land in the same ring
-/// buffer as everything else. On its own it falls back to `NSLog`.
+/// The destination of the problems that this target reports. The app target
+/// sets it to `Diagnostics.note`, so config and command failures go into the
+/// same ring buffer as all other messages. Without a sink, it uses `NSLog`.
 public enum Log {
     nonisolated(unsafe) private static var sink: (@Sendable (String) -> Void)?
 

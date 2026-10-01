@@ -79,7 +79,8 @@ enum WindowServer {
         return CGSize(width: width, height: height)
     }
 
-    /// The pixels of one window, at its size in points. Synchronous, 3-18 ms.
+    /// The pixels of one window, at its size in points. The call is
+    /// synchronous and takes 3-18 ms.
     ///
     /// An app can release the drawing surface of a window that is covered or
     /// on another Space. Chrome does this. The capture of such a window shows
@@ -124,7 +125,7 @@ enum WindowServer {
     ///   the record, and it stops the process on random data there.
     /// - The click point at 0x20 is far from the window. Some apps change a NaN
     ///   point to (0, 0), and then the click operates a control there.
-    /// - Only the mouse-down is sent. It makes the window key. Without a
+    /// - CmdTab sends only the mouse-down. It makes the window key. Without a
     ///   mouse-up, no control can operate.
     private static func makeKeyWindow(_ psn: inout ProcessSerialNumber, _ id: CGWindowID) {
         var bytes = [UInt8](repeating: 0, count: 0x100)

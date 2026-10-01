@@ -1,37 +1,38 @@
 import CoreGraphics
 
+/// A screen edge that a window can tile to.
 public enum WindowEdge: String, Sendable, CaseIterable {
     case left, right, top, bottom
 }
 
-/// Where a window should go. Pure geometry, so the part most likely to be
-/// wrong is the part that can be tested.
+/// The target frame of a window. This type contains only geometry, so tests
+/// can examine it without real windows.
 ///
-/// Everything here works in the *top-left origin* space that the Accessibility
-/// API and `CGWindowList` use: y grows downward from the top-left corner of the
-/// display whose origin is zero. AppKit's `NSScreen` uses the opposite vertical
-/// convention, so screen rects have to come through `flip` on the way in.
+/// All values use the *top-left origin* coordinates of the Accessibility API
+/// and `CGWindowList`. The y value increases downward from the top-left corner
+/// of the display with origin zero. AppKit `NSScreen` uses the opposite
+/// vertical direction. Thus, convert each `NSScreen` rect with `flip` first.
 public enum Layout {
-    /// Repeated presses on the same edge walk these, the way Raycast does:
-    /// half, then two thirds, then one third, then back to half.
+    /// The fractions for repeated presses on the same edge, as in Raycast. The
+    /// cycle is one half, two thirds, one third, and then one half again.
     public static let fractions: [CGFloat] = [1.0 / 2.0, 2.0 / 3.0, 1.0 / 3.0]
 
-    /// How far a frame may differ from a fraction and still count as already
-    /// being there.
+    /// The maximum difference, in points, between a window frame and a
+    /// fraction frame that still counts as a match.
     ///
-    /// Generous on purpose. A terminal resizes in whole character cells, so it
-    /// never lands on an exact fraction, and Ghostty can be ~10pt off. The
-    /// smallest gap between two fractions on the narrower of the two displays
-    /// here is 240pt, so there is a lot of room before this could confuse one
-    /// fraction for another.
+    /// A terminal resizes in whole character cells, so it does not stop on an
+    /// exact fraction. Ghostty can be approximately 10 points off. On a display
+    /// that is 1440 points wide, the smallest difference between two fractions
+    /// is 240 points. Thus, this tolerance does not confuse two fractions.
     public static let tolerance: CGFloat = 20
 
-    /// AppKit's bottom-left origin to the top-left origin AX uses, and back.
-    /// The function is its own inverse.
+    /// Converts between the AppKit bottom-left origin and the AX top-left
+    /// origin. The function is its own inverse.
     ///
-    /// `primaryMaxY` is the height of the display whose origin is `(0, 0)`, not
-    /// of the screen being converted. Getting that wrong is invisible on a
-    /// single display and badly wrong on any other.
+    /// `primaryMaxY` is the height of the display with origin `(0, 0)`, not the
+    /// height of the converted screen. If there is only one display, an
+    /// incorrect value is not visible. On other displays, the result is
+    /// incorrect.
     public static func flip(_ rect: CGRect, primaryMaxY: CGFloat) -> CGRect {
         CGRect(x: rect.minX, y: primaryMaxY - rect.maxY,
                width: rect.width, height: rect.height)
@@ -54,9 +55,8 @@ public enum Layout {
         }
     }
 
-    /// The frame to apply next. If the window is already sitting at one of the
-    /// fractions for this edge, advance to the following one. Otherwise snap to
-    /// a half, wherever the window happens to be now.
+    /// The next frame for `edge`. If the window is at one of the fractions for
+    /// `edge`, the result is the next fraction. If not, the result is a half.
     public static func next(edge: WindowEdge, window: CGRect, in visible: CGRect) -> CGRect {
         let current = fractions.firstIndex { fraction in
             matches(window, frame(edge: edge, fraction: fraction, in: visible))
@@ -66,18 +66,17 @@ public enum Layout {
         return frame(edge: edge, fraction: next, in: visible)
     }
 
-    /// The window's own size, moved to the middle of `visible`. The size is
-    /// deliberately untouched: this is what the first press of `tile:center`
-    /// does, before the fractions take over.
+    /// The window frame, moved to the center of `visible`, with the same size.
+    /// The first press of `tile:center` uses this frame.
     public static func centered(_ window: CGRect, in visible: CGRect) -> CGRect {
         CGRect(x: (visible.minX + (visible.width - window.width) / 2).rounded(),
                y: (visible.minY + (visible.height - window.height) / 2).rounded(),
                width: window.width, height: window.height)
     }
 
-    /// A centered box taking `fraction` of `visible`. An edge constrains one
-    /// axis and stays flush with the other; the centre is flush with nothing,
-    /// so the fraction applies to both.
+    /// A centered frame that takes `fraction` of `visible` on both axes. An
+    /// edge tile fills one axis. A centered frame is not flush with an edge, so
+    /// the fraction applies to both axes.
     public static func centered(fraction: CGFloat, in visible: CGRect) -> CGRect {
         centered(CGRect(origin: .zero,
                         size: CGSize(width: (visible.width * fraction).rounded(),
@@ -85,10 +84,10 @@ public enum Layout {
                  in: visible)
     }
 
-    /// `next(edge:)` for the centre. Same cycle as an edge, with one difference:
-    /// a window that is not already at one of the fractions keeps its size and
-    /// is only moved. So the first press centres the window you have, and the
-    /// presses after it walk the fractions.
+    /// `next(edge:window:in:)` for the center. The cycle is the same as for an
+    /// edge, with one difference. If the window is not at one of the fractions,
+    /// the window keeps its size and only moves. Thus, the first press centers
+    /// the window, and each press after it changes to the next fraction.
     public static func nextCentered(window: CGRect, in visible: CGRect) -> CGRect {
         if let current = fractions.firstIndex(where: { fraction in
             matches(window, centered(fraction: fraction, in: visible))
@@ -96,13 +95,13 @@ public enum Layout {
             return centered(fraction: fractions[(current + 1) % fractions.count], in: visible)
         }
         let moved = centered(window, in: visible)
-        // Already centred, at a size that is none of the fractions: moving it
-        // again would stand still, so this is where the cycle starts.
+        // The window is centered, but its size is not a fraction. A move does
+        // not change the frame, so start the cycle here.
         return matches(window, moved) ? centered(fraction: fractions[0], in: visible) : moved
     }
 
-    /// Whether the window is already filling `visible`, which is what makes
-    /// maximize a toggle.
+    /// True if the window fills `visible`. Maximize uses this value to decide
+    /// the direction of the toggle.
     public static func isMaximized(_ window: CGRect, in visible: CGRect) -> Bool {
         matches(window, visible)
     }

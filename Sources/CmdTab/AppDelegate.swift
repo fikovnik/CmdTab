@@ -9,20 +9,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var tap = HotkeyTap(switcher: switcher, host: host)
     private var statusItem: NSStatusItem?
     private var permissionTimer: Timer?
-    /// Appended to the desktop number: "…" until the tap is up, "!" if it
-    /// could not be created.
+    /// The suffix of the menu bar title. "…" until the event tap starts, "!"
+    /// if the event tap cannot start.
     private var tapMarker = "…"
-    /// Appended when the config file has problems, so a typo is visible rather
-    /// than just silently costing you a binding.
+    /// "⚠" if the config file has errors. Else a typo removes a binding, and
+    /// the user does not see why.
     private var configMarker = ""
     private var menuIcon = MenuIcon.desktopNumber
     private var configErrors: [String] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Send the config target's complaints to the same ring buffer as
-        // everything else, rather than to NSLog.
-        // Hops to main because this is called from wherever the complaint
-        // came from, including the queue a shell action was spawned on.
+        // Send the messages of `CmdTabConfig` to `Diagnostics`, not to `NSLog`.
+        // `Log` can call the sink on any queue, for example the queue of a
+        // shell action. Thus, the sink continues on the main queue.
         Log.use { message in
             DispatchQueue.main.async { MainActor.assumeIsolated { Diagnostics.note(message) } }
         }
@@ -49,7 +48,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if requestAccessibility() {
             startTap()
         } else {
-            // Permission is granted out-of-process. Poll until the user flips it.
+            // The user gives the permission in System Settings, which is a
+            // different process. Thus, poll until `AXIsProcessTrusted` is true.
             permissionTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] timer in
                 guard AXIsProcessTrusted() else { return }
                 timer.invalidate()
@@ -61,16 +61,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// The event tap holds an unretained pointer to `tap`, so tear it down
-    /// deliberately rather than leaving the order to process teardown.
+    /// The event tap keeps an unretained pointer to `tap`. Thus, stop the tap
+    /// before the process ends.
     func applicationWillTerminate(_ notification: Notification) {
         tap.stop()
     }
 
     private func requestAccessibility() -> Bool {
-        // Spelled out because `kAXTrustedCheckOptionPrompt` is imported as a
-        // mutable global, which Swift 6 will not let us read. Its value has been
-        // this string since the option existed.
+        // Swift imports `kAXTrustedCheckOptionPrompt` as a mutable global, and
+        // Swift 6 does not let code read it. Its value is always this string.
         let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
         return AXIsProcessTrustedWithOptions(options)
     }
@@ -90,7 +89,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let icon: String
         switch menuIcon {
         case .desktopNumber:
-            // A full-screen Space has no desktop number, so it keeps the tab glyph.
+            // A full-screen Space has no desktop number. It shows the tab glyph.
             let layout = Spaces.layout()
             let space = layout.display(identifier: Spaces.activeDisplayIdentifier())?.currentSpace
             icon = space.flatMap(layout.desktopNumber(of:)).map(String.init) ?? "⇥"
@@ -100,8 +99,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem?.button?.title = icon + configMarker + tapMarker
     }
 
-    /// Read the config and apply it. Safe to call again, which is what the
-    /// Reload menu item does.
+    /// Reads the config and applies it. Each call replaces all config state,
+    /// so the Reload menu item can call it again.
     private func applyConfig() {
         let config = Config.load()
         let installer = ConfigInstaller()
@@ -154,17 +153,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     #endif
 
-    /// Screen Recording buys thumbnails and `kCGWindowName`, the only source of
-    /// a title for an off-Space window. macOS caches the decision per process,
-    /// so the grant only takes effect on relaunch, hence a menu item rather
-    /// than something done at launch.
+    /// Screen Recording gives the previews and `kCGWindowName`, the current
+    /// title of a window on another Space. macOS keeps the decision for the
+    /// life of the process, so a grant has an effect only after a relaunch.
+    /// Thus, CmdTab asks from a menu item, not at launch.
     @objc private func enableScreenRecording() {
         WindowPreview.requestPermission()
     }
 
-    /// Opens the config file, creating a starter one the first time so the
-    /// feature is discoverable rather than something you have to read the
-    /// README to find.
+    /// Opens the config file. If the file does not exist, writes a starter
+    /// config first, so that the user does not need the README.
     @objc private func openConfiguration() {
         let url = Config.defaultURL
         if !FileManager.default.fileExists(atPath: url.path) {
@@ -186,8 +184,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.runModal()
     }
 
-    /// Spells out the defaults rather than starting empty, so the shape of the
-    /// file and the action names are visible without documentation.
+    /// Contains the defaults, not an empty object, so that the user sees the
+    /// file format and the action names without documentation.
     private static let starterConfig = """
     {
       "keys": {

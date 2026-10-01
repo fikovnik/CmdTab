@@ -8,19 +8,19 @@ private let logger = Logger(subsystem: "net.fikovnik.cmdtab", category: "diagnos
 
 @MainActor
 enum Diagnostics {
-    /// Rolling log of switcher activity, so a misfire can be read back after
-    /// the fact instead of reproduced on demand.
+    /// The recent switcher events. After a failure, the user can read them and
+    /// does not need to reproduce the failure.
     ///
-    /// Only `report` and `trace` ever read it, and both are debug-only, so in a
-    /// release build the whole thing is dead weight. Hence the flag below.
+    /// Only `report` and `trace` read the events, and only in a `DIAGNOSTICS`
+    /// build. Thus, `note` keeps no events in a release build.
     private static var events: [String] = []
 
-    /// One AX failure burst is a dozen lines at 100 ms apart, so a buffer that
-    /// only just holds one evicts whatever it was you wanted to see around it.
+    /// A burst of AX failures gives about 12 lines. The buffer must also keep
+    /// the events before and after a burst.
     private static let capacity = 300
 
-    /// `@autoclosure` so a release build does not even build the string: every
-    /// call site interpolates, and the AX failure path runs hundreds of times.
+    /// `@autoclosure`, so that a release build does not make the string. Each
+    /// call interpolates, and the AX failure path can run hundreds of times.
     static func note(_ text: @autoclosure () -> String) {
         #if DIAGNOSTICS
         let now = Date().timeIntervalSince1970
@@ -35,11 +35,11 @@ enum Diagnostics {
     static let traceURL = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Logs/CmdTab/trace.log")
 
-    /// Draw the HUD offscreen with synthetic content that exercises the layout:
-    /// more rows than fit, long titles, Space badges, varied app counts.
+    /// Draws the HUD offscreen with sample windows. The samples test the layout
+    /// with more rows than fit, a long title and Space labels.
     static func renderHUD(to path: String) {
-        // Resolve the accent colour and appearance the panel draws with. Both
-        // want an initialized app, and this path runs before `NSApp.run`.
+        // The accent color and the appearance need an `NSApplication`. This
+        // path runs before `NSApp.run`.
         _ = NSApplication.shared
         let samples: [(String, String, String?)] = [
             ("Ghostty", "cmd-tab@pokhara.local: ✳ Claude Code", "Desktop 2"),
@@ -61,15 +61,18 @@ enum Diagnostics {
             return window
         }
         let base = (path as NSString).deletingPathExtension
-        // Both extremes of what can sit behind the blur.
+        // The two extremes of the content behind the blur.
         HUDPanel().render(windows, selected: 2, scope: "All Spaces", rows: 6,
                           backdrop: .white, to: base + "-on-white.png")
         HUDPanel().render(windows, selected: 9, scope: "This Space", rows: 6,
                           backdrop: .black, to: base + "-on-black.png")
     }
 
-    /// Both switcher lists, the preview cache, the recent events and the
-    /// windows of each app. Starts with a full refresh.
+    /// Starts with a full refresh. Then returns a report with:
+    /// - the two switcher lists,
+    /// - the preview cache,
+    /// - the recent events,
+    /// - the windows of each app.
     static func report() -> String {
         var out = "AXIsProcessTrusted: \(AXIsProcessTrusted())\n"
         out += "ScreenRecording: \(CGPreflightScreenCaptureAccess())\n"
@@ -111,16 +114,17 @@ enum Diagnostics {
         return out
     }
 
-    /// Auto-tracing costs a full Accessibility walk per Space change, so it is
-    /// off unless the marker file exists. The menu item ignores this.
+    /// An automatic trace does a full AX scan on each Space change. Thus, it is
+    /// off if the file `enable-trace` does not exist. The menu item always
+    /// writes a trace.
     static var autoTraceEnabled: Bool {
         FileManager.default.fileExists(atPath:
             traceURL.deletingLastPathComponent().appendingPathComponent("enable-trace").path)
     }
 
-    /// Windows on a Space are only visible to AX while that Space is active, so
-    /// a trace written at Space-change time is the only way to see what the
-    /// registry learns and when.
+    /// AX gives the windows of a Space only while that Space is visible. Thus,
+    /// only a trace at each Space change shows what `WindowTracker` learns, and
+    /// when.
     static func trace(_ reason: String) {
         let manager = FileManager.default
         try? manager.createDirectory(at: traceURL.deletingLastPathComponent(),

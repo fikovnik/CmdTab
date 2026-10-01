@@ -1,9 +1,9 @@
 import CmdTabConfig
 
-/// Collects a parsed config into the chord table the event tap matches against.
+/// Puts the bindings of a parsed config into the chord table of the event tap.
 ///
-/// Not `@MainActor`, so that it can satisfy `BindingSink` without the actions
-/// needing to know about isolation. It touches nothing but its own fields.
+/// Not `@MainActor`, so that it can conform to `BindingSink` and the actions do
+/// not need to know about isolation. It changes only its own fields.
 final class ConfigInstaller: BindingSink {
     private(set) var bindings = Bindings()
 

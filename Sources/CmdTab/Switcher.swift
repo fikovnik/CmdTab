@@ -1,36 +1,35 @@
 import AppKit
 import CmdTabConfig
 
-/// How long Cmd must be held before the list appears. A deliberate Cmd+Tab tap
-/// runs 120-200 ms, so this has to clear that or the panel flashes on every
-/// quick switch. The extra margin here costs nothing, because the list is only
-/// ever a hint, because releasing Cmd switches either way.
+/// The time that the user must hold the trigger before the list shows. A
+/// quick Cmd+Tab takes 120-200 ms. A shorter delay shows the list for a
+/// moment on each quick switch.
 private let revealDelay: TimeInterval = 0.25
 
-/// How long the selection must sit still, once the list is up, before the first
-/// thumbnail appears. Cycling straight past ten windows should not flash ten
-/// previews, because a preview is what you get for stopping. Paid per cycle:
-/// after the first one is up, the preview follows the selection immediately.
+/// The time that the selection must stay on one row before the first preview
+/// shows. Thus, the user can step fast past many rows without a preview for
+/// each row. After the first preview, the preview follows the selection
+/// immediately.
 private let previewDelay: TimeInterval = 0.2
 
 @MainActor
 final class Switcher {
-    /// Everything one Cmd-held pass owns, bundled into a single value so that
-    /// ending a cycle is one assignment and cannot leave a field behind.
+    /// All state of one cycle. Thus, one assignment ends a cycle and clears
+    /// all fields.
     private struct Session {
         let mode: SwitchMode
-        /// Set in `.currentApp` mode: only this process's windows are listed.
+        /// Only in `.currentApp` mode: the list shows only the windows of this
+        /// process.
         let appFilter: pid_t?
-        /// Unbounded step counter, folded into `windows` only when rendering.
-        /// Lets steps arrive before the (deferred) window scan has finished.
+        /// The sum of all steps, with no limit. `index` gets the row from it.
+        /// Thus, steps can come before the window scan is complete.
         var offset: Int
         var scope = WindowScope.allSpaces
-        /// `nil` until the scan lands, distinct from an empty list, which means
-        /// the scan ran and found nothing worth switching to.
+        /// `nil` until the scan is complete. An empty list means that the scan
+        /// found no window to switch to.
         var windows: [Window]?
-        /// Set once Cmd has been held past `revealDelay`. The list is shown as
-        /// soon as both this and a scanned list are true, in whichever order
-        /// they happen to arrive.
+        /// True after the user holds the trigger for `revealDelay`. The list
+        /// shows when this is true and `windows` is set, in either order.
         var wantsHUD = false
 
         var scopeLabel: String { scope == .allSpaces ? "All Spaces" : "This Space" }
@@ -46,17 +45,17 @@ final class Switcher {
     private var session: Session?
     private var revealTimer: Timer?
     private var previewTimer: Timer?
-    /// A committed session waiting for its switch to run off the event tap
-    /// callback. Parked here rather than captured by the closure so the cycle
-    /// can end immediately, because the keyboard must not stay swallowed for it.
+    /// A committed session that waits for its switch outside the event tap
+    /// callback. The cycle ends immediately, so that the tap does not discard
+    /// keys while the switch waits.
     private var pendingSwitch: Session?
 
     var isCycling: Bool { session != nil }
     var mode: SwitchMode? { session?.mode }
 
-    /// Rows the panel can show at once, so PgUp/PgDn move by exactly one
-    /// screenful. Derived from the screen and the current list rather than from
-    /// what the HUD last drew, so it is right even while the panel is hidden.
+    /// The number of rows that the panel can show, so that PgUp and PgDn move
+    /// by one page. It uses the screen and the list, not the HUD. Thus, it is
+    /// also correct while the HUD is hidden.
     var pageSize: Int { max(1, min(session?.windows?.count ?? 1, hud.rowCapacity)) }
 
     func start(_ mode: SwitchMode, reversed: Bool) {
@@ -68,24 +67,23 @@ final class Switcher {
         )
         Diagnostics.note("start \(mode) reversed=\(reversed)")
 
-        // .common, not the default mode: the event tap's run loop source uses
-        // common modes, and the timer must still fire while it is pumping.
+        // `.common`, so that the timer also fires while the event tap is busy.
         let timer = Timer(timeInterval: revealDelay, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated { self?.reveal() }
         }
         RunLoop.main.add(timer, forMode: .common)
         revealTimer = timer
 
-        // Scanning windows over the Accessibility API can take tens of
-        // milliseconds. Defer it so the event tap callback returns immediately
-        // and the system never disables the tap for exceeding its budget.
+        // A window scan can take tens of milliseconds. Do it after the event
+        // tap callback returns. If the callback is too slow, the system
+        // disables the tap.
         DispatchQueue.main.async { [weak self] in
             MainActor.assumeIsolated { self?.reload() }
         }
     }
 
-    /// `delta` is +1 forward through the list, -1 backward. Page moves clamp at
-    /// the ends. Single steps wrap, the way a switcher is expected to.
+    /// `delta` is +1 for forward and -1 for back. If `wrap` is false, as for a
+    /// page move, the selection stops at the first or the last row.
     func step(_ delta: Int, wrap: Bool = true) {
         guard var session else { return }
         if !wrap, let windows = session.windows, !windows.isEmpty {
@@ -100,26 +98,23 @@ final class Switcher {
         }
     }
 
-    /// Right arrow: narrow the list to this Space and back again. The
-    /// highlighted window is preserved by id across the flip (see `reload`), so
-    /// the selection never moves under you.
+    /// Changes the list between all Spaces and the visible Spaces. `reload`
+    /// keeps the same window selected.
     func toggleScope() {
         guard var session else { return }
         session.scope = session.scope == .allSpaces ? .currentSpace : .allSpaces
         self.session = session
-        // Same reason as `start`: rescanning talks to the Accessibility API,
-        // far too slow to do inside the event tap callback.
+        // Do the scan after the callback, as in `start`.
         DispatchQueue.main.async { [weak self] in
             MainActor.assumeIsolated { self?.reload() }
         }
     }
 
-    /// Switch to the highlighted window and end the cycle.
+    /// Switches to the selected window and ends the cycle.
     ///
-    /// Called from the event tap callback, so the switch itself is deferred: an
-    /// AX scan or a focus round-trip inside the callback is exactly what gets a
-    /// tap disabled for overrunning its budget, and a disabled tap drops the
-    /// events this switcher needs to see.
+    /// The event tap callback calls this function. Thus, the switch occurs
+    /// later. An AX scan or a focus in the callback can make the system disable
+    /// the tap. A disabled tap does not get the events that the switcher needs.
     func commit() {
         guard let session else { return }
         pendingSwitch = session
@@ -138,8 +133,8 @@ final class Switcher {
         guard var session = pendingSwitch else { return }
         pendingSwitch = nil
 
-        // A quick enough Cmd+Tab releases the key before the deferred scan has
-        // landed. Finish it here rather than silently dropping the switch.
+        // After a fast Cmd+Tab, `windows` can still be `nil`. Do the scan now,
+        // so that the switch occurs.
         if session.windows == nil { session.windows = Switcher.scan(session) }
 
         guard let windows = session.windows, !windows.isEmpty else {
@@ -154,8 +149,8 @@ final class Switcher {
         guard var session else { return }
         session.wantsHUD = true
         self.session = session
-        // Whether the deferred scan has landed by now is the whole question
-        // when the panel fails to appear: "nil" means it has not.
+        // If the panel does not show, this tells if the scan is complete.
+        // "nil" means that it is not complete.
         Diagnostics.note("reveal timer: windows=\(session.windows?.count.description ?? "nil")")
         showHUD()
     }
@@ -169,9 +164,8 @@ final class Switcher {
         armPreview()
     }
 
-    /// Move the preview to the selected row, or start the dwell timer if there
-    /// is no preview up yet. The delay guards the *first* thumbnail of a cycle.
-    /// Once one is on screen, waiting again only makes the panel blink.
+    /// Shows the preview of the selected row. If no preview shows yet, starts
+    /// `previewTimer` first.
     private func armPreview() {
         previewTimer?.invalidate()
         previewTimer = nil
@@ -185,8 +179,7 @@ final class Switcher {
               let windows = session.windows, !windows.isEmpty
         else { return }
 
-        // Same run loop mode as the reveal timer: the event tap pumps common
-        // modes while Cmd is held, and a default-mode timer would never fire.
+        // `.common`, for the same reason as the reveal timer.
         let timer = Timer(timeInterval: previewDelay, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated { self?.showPreview() }
         }
@@ -204,7 +197,6 @@ final class Switcher {
                      anchor: anchor.frame, on: anchor.screen)
     }
 
-    /// Drop the cycle. One assignment, so no field can be left behind.
     private func end() {
         revealTimer?.invalidate()
         revealTimer = nil
@@ -223,8 +215,8 @@ final class Switcher {
         session.windows = found
         Diagnostics.note("loaded \(found.count) (scope=\(session.scope))")
 
-        // Keep the highlight on the same window across a scope change. If it
-        // fell out of the narrowed list, fall back to the frontmost window.
+        // Keep the same window selected after a scope change. If the new list
+        // does not contain it, select the first window.
         if let previous {
             session.offset = found.firstIndex { $0.id == previous } ?? 0
         }
@@ -238,9 +230,9 @@ final class Switcher {
         }
     }
 
-    /// The window list for a session's scope, most-recently-used first. Talks
-    /// to the Accessibility API, so it never runs on the tap callback. A list of
-    /// one is returned empty: there is nothing to switch to.
+    /// The windows in the scope of `session`, in switcher order. It uses AX, so
+    /// it must not run in the event tap callback. If it finds only one window,
+    /// it returns an empty list, because there is no window to switch to.
     private static func scan(_ session: Session) -> [Window] {
         let tracker = WindowTracker.shared
         // The window that the user leaves goes first. Then the next window in

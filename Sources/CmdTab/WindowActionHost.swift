@@ -1,18 +1,16 @@
 import AppKit
 import CmdTabConfig
 
-/// Performs the window and Space actions the config binds.
+/// Does the window and Space actions that the config binds.
 ///
-/// This is the app-target half of `WindowActions`: the actions themselves carry
-/// only what was configured, and everything that needs Accessibility, AppKit or
-/// the WindowServer happens here.
+/// The actions in `CmdTabConfig` contain only the config values. This type does
+/// all the work that needs AX, AppKit or the WindowServer.
 @MainActor
 final class WindowActionHost: WindowActions {
-    /// Frames to put windows back to when maximize is toggled off.
+    /// The frames before maximize, by window ID. `toggleMaximize` restores them.
     ///
-    /// Keyed by window id and never pruned on purpose. An entry is a few bytes
-    /// and the alternative is either a timer or a notification subscription for
-    /// something that costs nothing to leave alone.
+    /// The dictionary keeps the entries of closed windows. An entry is only a
+    /// few bytes, and a cleanup needs a timer or a notification observer.
     private var restoreFrames: [CGWindowID: CGRect] = [:]
 
     func tile(_ edge: WindowEdge) {
@@ -21,8 +19,8 @@ final class WindowActionHost: WindowActions {
               let visible = WindowGeometry.visibleFrame(containing: current)
         else { return }
 
-        // Tiling a full-screen window would fight the Space it lives in, so
-        // bring it out first and tile the restored frame.
+        // A full-screen window has its own Space. Thus, end full screen first,
+        // then set the frame.
         if WindowGeometry.isFullScreen(target.window) == true {
             _ = WindowGeometry.setFullScreen(false, for: target.window)
         }
@@ -31,9 +29,9 @@ final class WindowActionHost: WindowActions {
                                 on: target)
     }
 
-    /// Unlike tiling, this leaves a full-screen window alone: such a window
-    /// fills the display, so centering the size it has is a no-op and there is
-    /// no fraction it can match to start cycling from.
+    /// Unlike `tile`, this does not end full screen. A full-screen window fills
+    /// the display. Thus, it has no size to center and no fraction to start the
+    /// cycle from.
     func center() {
         guard let target = WindowGeometry.focused(),
               let current = WindowGeometry.frame(of: target.window),
@@ -54,9 +52,9 @@ final class WindowActionHost: WindowActions {
         }
     }
 
-    /// Maximize fills the screen's *visible* frame, so the menu bar and Dock
-    /// stay reachable. That is what makes it worth having alongside full
-    /// screen, which takes the whole display and its own Space.
+    /// Maximize fills the visible frame of the screen, so that the menu bar and
+    /// the Dock stay visible. Full screen uses the full display and its own
+    /// Space.
     func toggleMaximize() {
         guard let target = WindowGeometry.focused(),
               let current = WindowGeometry.frame(of: target.window),
@@ -65,9 +63,8 @@ final class WindowActionHost: WindowActions {
 
         if Layout.isMaximized(current, in: visible) {
             guard let restore = restoreFrames.removeValue(forKey: target.id) else {
-                // Maximized by something other than us, so there is nothing to
-                // go back to. Half the screen is a more useful answer than
-                // doing nothing.
+                // CmdTab did not maximize the window, so there is no frame to
+                // restore. Use the left half, which is better than no change.
                 WindowGeometry.setFrame(Layout.frame(edge: .left, fraction: Layout.fractions[0],
                                                      in: visible), on: target)
                 return

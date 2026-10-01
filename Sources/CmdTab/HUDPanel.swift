@@ -8,14 +8,14 @@ private let footerHeight: CGFloat = 26
 private let scrollBarWidth: CGFloat = 4
 private let minWidth: CGFloat = 300
 private let maxWidth: CGFloat = 760
-/// Long enough to scan, short enough to never dominate the screen. Beyond this
-/// the list scrolls around the selection.
+/// The maximum number of rows, so that the panel does not fill the screen. With
+/// more windows, the list scrolls with the selection.
 private let rowCap = 14
 
-/// The panel sits on a translucent blur, so whatever is behind it bleeds
-/// through, so a white browser page turns a dark HUD pale and washes out light
-/// text. A scrim pins the floor on how light the background can get, and fixed
-/// light-on-dark colours keep the text legible regardless of system appearance.
+/// The panel has a translucent blur, so the content behind it shows through.
+/// A white page behind the panel makes the background light and the light text
+/// hard to read. The dark `scrim` sets a limit on how light the background can
+/// be. The text colors are light in all system appearances.
 private enum Palette {
     static let scrim = NSColor.black.withAlphaComponent(0.68)
     static let primary = NSColor.white
@@ -26,9 +26,8 @@ private enum Palette {
     static let scrollThumb = NSColor.white.withAlphaComponent(0.58)
     static var selection: NSColor { .controlAccentColor }
 
-    /// Accent colours run from navy to yellow depending on the user's setting,
-    /// so pick the highlight's text colour from its luminance rather than
-    /// assuming white reads on it.
+    /// The accent color can be any color from navy to yellow. Thus, the text
+    /// color on the selection comes from the luminance of the accent color.
     static var onSelection: NSColor {
         guard let rgb = selection.usingColorSpace(.sRGB) else { return .white }
         let luminance = 0.2126 * rgb.redComponent
@@ -59,7 +58,7 @@ private final class HUDView: NSView {
                       height: listHeight + footerHeight + padding * 2)
     }
 
-    /// Keep the selection inside the rendered window of the list.
+    /// Scrolls the list so that the selected row is visible.
     func scrollToSelection() {
         let rows = visibleRows
         guard rows > 0 else { return }
@@ -217,20 +216,20 @@ final class HUDPanel {
     private var panel: NSPanel?
     private let view = HUDView()
 
-    /// Which modifier the footer tells you to release. Set from the trigger
-    /// that opened the cycle, because that is no longer always Cmd.
+    /// The modifier that the footer tells the user to release. It comes from
+    /// the trigger of the current cycle.
     static var modifierHint = "\u{2318}"
 
     static var keyHint: String {
         "↑↓ move · → this Space · release \(modifierHint) to switch · esc cancel"
     }
 
-    /// How many rows the panel can fit on the active screen, whether or not it
-    /// is on screen right now. `Switcher` pages by this.
+    /// The number of rows that fit on the active screen, also while the panel
+    /// is hidden. `Switcher` uses it for PgUp and PgDn.
     var rowCapacity: Int { maxRows(on: activeScreen()) }
 
-    /// Where the list sits right now, for the preview to anchor beside.
-    /// `nil` while the panel is hidden, because there is nothing to sit beside.
+    /// The frame and the screen of the panel. The preview shows next to it.
+    /// `nil` while the panel is hidden.
     var anchor: (frame: NSRect, screen: NSScreen)? {
         guard let panel, panel.isVisible else { return nil }
         return (panel.frame, activeScreen())
@@ -266,8 +265,8 @@ final class HUDPanel {
         panel?.orderOut(nil)
     }
 
-    /// Render the HUD offscreen to a PNG. Lets layout be checked without
-    /// capturing the screen, and so without Screen Recording permission.
+    /// Draws the HUD offscreen to a PNG file. Thus, a check of the layout does
+    /// not need a screen capture or the Screen Recording permission.
     func render(_ windows: [Window], selected: Int, scope: String, rows: Int,
                 backdrop: NSColor, to path: String) {
         view.items = windows
@@ -279,7 +278,7 @@ final class HUDPanel {
         let size = view.measure()
         view.frame = NSRect(origin: .zero, size: size)
         view.wantsLayer = true
-        // Worst case: assume the blur passes the backdrop through untouched.
+        // The worst case: the blur shows the backdrop with no change.
         view.layer?.backgroundColor = backdrop.cgColor
 
         guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }

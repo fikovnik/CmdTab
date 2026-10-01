@@ -5,9 +5,8 @@ let package = Package(
     name: "CmdTab",
     platforms: [.macOS(.v13)],
     targets: [
-        // Chord parsing, the config file and the action table. Deliberately
-        // free of AppKit and of private SPI, so the parts most worth testing
-        // can be tested without a running app or a live WindowServer.
+        // Chord parsing, the config file and the action table. No AppKit and
+        // no private API. Thus, tests can run it without a WindowServer.
         .target(
             name: "CmdTabConfig",
             path: "Sources/CmdTabConfig",
@@ -24,14 +23,14 @@ let package = Package(
             name: "CmdTab",
             dependencies: ["CmdTabConfig", "CmdTabModel"],
             path: "Sources/CmdTab",
-            // Everything in this app is main-thread-only by construction (event
-            // tap callback, AX, AppKit). Swift 6 mode makes the compiler hold
-            // that invariant instead of the comments.
+            // All code in the app runs on the main thread: the event tap
+            // callback, AX and AppKit. The Swift 6 mode makes the compiler
+            // check this.
             swiftSettings: [
                 .swiftLanguageMode(.v6),
-                // `--report`, the Write Diagnostics menu item and the
-                // Space-change auto-trace are debug-only: they walk every app
-                // over the Accessibility API and print window titles.
+                // `--report`, the Write Diagnostics menu item and the trace on
+                // a Space change are only in debug builds. They ask every app
+                // over AX and write window titles to a file.
                 .define("DIAGNOSTICS", .when(configuration: .debug)),
             ],
             linkerSettings: [.unsafeFlags(["-F", "/System/Library/PrivateFrameworks",

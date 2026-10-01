@@ -1,14 +1,11 @@
 import Carbon.HIToolbox
 import Foundation
 
-/// A key plus the modifiers held with it, one line of the config's `keys`
-/// table, parsed.
+/// A key and the modifiers held with it. It is the parsed form of one entry in
+/// the `keys` table of the config.
 ///
-/// The modifier encoding is deliberately the NSEvent-style mask rather than
-/// `CGEventFlags`, because that is what both channels of a symbolic hotkey
-/// install expect: the `com.apple.symbolichotkeys` plist stores it, and
-/// `CGSSetSymbolicHotKeyValue` takes it. Converting to `CGEventFlags` happens
-/// once, in the event tap, and only for the chords the tap owns.
+/// The modifiers use the `NSEvent` mask values, not `CGEventFlags`. These are
+/// the values that macOS stores in `com.apple.symbolichotkeys`.
 public struct Chord: Hashable, Sendable {
     public struct Modifiers: OptionSet, Hashable, Sendable {
         public let rawValue: UInt32
@@ -20,10 +17,9 @@ public struct Chord: Hashable, Sendable {
         public static let command = Modifiers(rawValue: 0x0010_0000)
         public static let function = Modifiers(rawValue: 0x0080_0000)
 
-        /// Everything an event tap can match on. `function` is absent on
-        /// purpose: arrow and function keys set it implicitly, so a tap-side
-        /// chord naming it could never match, and one not naming it would
-        /// match when it should not. Only the WindowServer can honour `fn`.
+        /// The modifiers that an event tap can match. This set does not include
+        /// `function`, because arrow and function keys set it automatically.
+        /// Thus, an event tap cannot know if the user holds the fn key.
         public static let tapMatchable: Modifiers = [.shift, .control, .option, .command]
     }
 
@@ -49,13 +45,14 @@ public struct Chord: Hashable, Sendable {
         }
     }
 
-    /// Parse `"ctrl-alt-cmd-h"`. Modifiers may appear in any order.
+    /// Parses a chord such as `"ctrl-alt-cmd-h"`. The modifiers can be in any
+    /// order.
     public init(parsing text: String) throws {
         let lower = text.lowercased()
         var tokens = lower.split(separator: "-").map(String.init)
         let keyName: String
         if lower.hasSuffix("-") {
-            // A trailing separator names the minus key: "cmd--", or bare "-".
+            // A separator at the end names the minus key, for example "cmd--" or "-".
             keyName = "minus"
         } else {
             guard let last = tokens.popLast() else { throw ParseError.empty }
@@ -79,9 +76,9 @@ public struct Chord: Hashable, Sendable {
         self.modifiers = mods
     }
 
-    /// The character the symbolic hotkey plist and SPI record alongside the key
-    /// code. `0xFFFF` for keys with no ASCII equivalent, which is what macOS
-    /// itself stores for arrows and function keys.
+    /// The character that the symbolic hotkey plist stores with the key code.
+    /// For a key without an ASCII character, macOS stores `0xFFFF`. Examples
+    /// are the arrow keys and the function keys.
     public var charCode: UInt16 {
         Chord.keys.values.first { $0.code == keyCode }?.char ?? 0xFFFF
     }
@@ -90,8 +87,8 @@ public struct Chord: Hashable, Sendable {
         Chord(keyCode: keyCode, modifiers: modifiers.subtracting(m))
     }
 
-    /// Just the modifier glyphs, in Apple's order. What the HUD footer needs
-    /// to say which key to release.
+    /// The modifier glyphs only, in the Apple order. The HUD footer uses them to
+    /// show which keys to release.
     public var modifierDisplay: String {
         var s = ""
         if modifiers.contains(.function) { s += "fn" }
@@ -125,14 +122,13 @@ public struct Chord: Hashable, Sendable {
 
     struct Key: Sendable {
         let code: UInt16
-        /// ASCII equivalent, or `0xFFFF` when the key has none.
+        /// The ASCII character, or `0xFFFF` if the key has no ASCII character.
         let char: UInt16
     }
 
-    /// Name → (key code, ASCII equivalent). The char values match what macOS
-    /// stores in `com.apple.symbolichotkeys` for its own defaults, which is how
-    /// they were checked: Fill is key 3 / char 102 (`f`), Minimize is key 46 /
-    /// char 109 (`m`), Tile Left Half is key 123 / char 65535 (an arrow).
+    /// Maps a key name to the key code and the ASCII character. The character
+    /// values are the same as the values that macOS stores in
+    /// `com.apple.symbolichotkeys` for its default shortcuts.
     static let keys: [String: Key] = {
         var t: [String: Key] = [:]
         func add(_ name: String, _ code: Int, _ char: UInt16, aliases: [String] = []) {

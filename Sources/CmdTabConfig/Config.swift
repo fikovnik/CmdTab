@@ -1,27 +1,27 @@
 import Foundation
 
-/// What the menu bar item shows.
+/// The content of the menu bar item.
 public enum MenuIcon: Sendable, Equatable {
-    /// The active desktop number, falling back to the tab glyph on a
-    /// full-screen Space, which has no number.
+    /// The number of the active desktop. A full-screen Space has no number, so
+    /// the item shows the tab glyph.
     case desktopNumber
-    /// Shown verbatim.
+    /// The item shows this text without change.
     case literal(String)
 
     static let desktopNumberKeyword = "desktop-number"
 }
 
+/// A chord and the action that it runs.
 public struct Binding: Sendable {
     public let chord: Chord
     public let action: any Action
 }
 
-/// `~/.config/cmdtab/config.json`, parsed.
+/// The parsed form of `~/.config/cmdtab/config.json`.
 ///
-/// Nothing here is fatal. A missing file, a malformed file, a bad chord or an
-/// unknown action name all degrade to "that one binding is missing, and there
-/// is an entry in `errors` saying why". Losing the switcher because of a typo
-/// four lines further down would be a poor trade.
+/// No error is fatal. Examples are a malformed file, an incorrect chord or an
+/// unknown action name. Only the incorrect binding is missing, and `errors`
+/// tells why. Thus, a typo in one entry does not remove the switcher.
 public struct Config: Sendable {
     public let bindings: [Binding]
     public let menuIcon: MenuIcon
@@ -36,8 +36,7 @@ public struct Config: Sendable {
     ]
     static let knownSections = ["keys", "menu"] + switcherSections.map(\.key)
 
-    /// The behaviour with no config file at all: exactly what CmdTab did before
-    /// there was one.
+    /// The configuration if there is no config file.
     public static var defaults: Config {
         Config(bindings: switcherDefaults(), menuIcon: .desktopNumber, errors: [])
     }
@@ -65,8 +64,8 @@ public struct Config: Sendable {
                           errors: ["not a JSON object"])
         }
 
-        // Decodable would silently drop a misspelled section, and these
-        // sections exist to be extended, so check the names explicitly.
+        // `Decodable` ignores unknown keys, so it does not find a misspelled
+        // section. Compare each name with the known sections.
         for key in root.keys.sorted() where !knownSections.contains(key) {
             errors.append("unknown section \"\(key)\"")
         }
@@ -74,8 +73,8 @@ public struct Config: Sendable {
         var bindings: [Binding] = []
         var claimed: [Chord: String] = [:]
 
-        /// Shared by the `keys` table and the switcher triggers so that chord
-        /// validation and conflict reporting cannot drift apart.
+        /// The `keys` table and the switcher triggers both use this function.
+        /// Thus, they use the same chord checks and the same conflict errors.
         @discardableResult
         func bind(chordText: String, action: any Action, origin: String) -> Bool {
             let chord: Chord
@@ -100,7 +99,7 @@ public struct Config: Sendable {
         }
 
         if let keys = section(root, "keys", &errors) {
-            // Sorted so that a duplicate chord reports the same way every run.
+            // Sort the keys, so that a duplicate chord gives the same error each time.
             for chordText in keys.keys.sorted() {
                 guard let spec = keys[chordText] as? String else {
                     errors.append("keys.\(chordText): value must be a string")
@@ -129,8 +128,8 @@ public struct Config: Sendable {
                 }
             }
 
-            // A cycle is committed by releasing the trigger's modifiers, so a
-            // trigger without any would start a cycle nothing could end.
+            // The release of the trigger modifiers ends a cycle. Thus, a trigger
+            // without modifiers starts a cycle that cannot end.
             var usable = true
             if let chord = try? Chord(parsing: trigger),
                chord.modifiers.intersection(.tapMatchable).isEmpty {
@@ -143,9 +142,8 @@ public struct Config: Sendable {
                             origin: "\(s.key).trigger") {
                 continue
             }
-            // Fall back to the default rather than leaving the switcher
-            // unbound: losing Cmd+Tab to a typo would mean editing JSON with no
-            // way to switch windows.
+            // If the configured trigger is not usable, use the default trigger.
+            // Without a switcher, the user cannot switch windows to correct the JSON.
             if trigger != s.defaultTrigger {
                 bind(chordText: s.defaultTrigger, action: SwitcherAction(mode: s.mode),
                      origin: "\(s.key).trigger fallback")
@@ -179,10 +177,9 @@ public struct Config: Sendable {
         return object
     }
 
-    /// An action is either a bare name or `<name>:<parameter>`. The
-    /// parameterized ones are spelled that way even where the parameter set is
-    /// small and closed, so that adding a direction or a desktop is a value
-    /// rather than another entry in a table of names.
+    /// An action is a name or `<name>:<parameter>`. Actions with a parameter
+    /// use this format also if the set of values is small. Thus, a new
+    /// direction or desktop is a new value, not a new name.
     static func action(for spec: String) throws -> any Action {
         if let command = spec.dropPrefix("shell:") {
             guard !command.isEmpty else { throw ActionError.emptyCommand("shell") }
@@ -214,8 +211,8 @@ public struct Config: Sendable {
         case "next": return .step(1)
         default: break
         }
-        // macOS allows 16 Spaces per display. A number past however many you
-        // actually have is accepted and does nothing, same as the system's own
+        // macOS lets a display have a maximum of 16 Spaces. A number larger than
+        // the number of Spaces is valid and does nothing, as with the system
         // shortcuts.
         guard let n = Int(text), (1...16).contains(n) else {
             throw ActionError.badParameter("switch-desktop", text, "1-16, previous or next")
@@ -223,9 +220,8 @@ public struct Config: Sendable {
         return .desktop(n)
     }
 
-    /// The actions that take no parameter. Each value is a factory rather than
-    /// a shared instance, so two chords bound to the same action do not share
-    /// one object.
+    /// The actions without a parameter. Each value is a factory, so two chords
+    /// with the same action get different objects.
     static let builtins: [String: @Sendable () -> any Action] = [
         "toggle-fullscreen": { ToggleAction(kind: .fullscreen) },
         "toggle-maximize": { ToggleAction(kind: .maximize) },
@@ -234,7 +230,7 @@ public struct Config: Sendable {
     enum ActionError: Error, Equatable, CustomStringConvertible {
         case unknownAction(String)
         case emptyCommand(String)
-        /// A known action whose parameter does not name anything.
+        /// A known action with a parameter value that is not valid.
         case badParameter(String, String, String)
 
         var description: String {
@@ -249,8 +245,9 @@ public struct Config: Sendable {
 }
 
 private extension String {
-    /// The remainder after `prefix`, or nil if it is not there. Trims the
-    /// leading space in `"shell: open -a Finder"` so both spellings work.
+    /// The text after `prefix`, or `nil` if the text does not start with
+    /// `prefix`. It removes the whitespace around the result, so
+    /// `"shell: open -a Finder"` also works.
     func dropPrefix(_ prefix: String) -> String? {
         guard hasPrefix(prefix) else { return nil }
         return String(dropFirst(prefix.count)).trimmingCharacters(in: .whitespaces)
