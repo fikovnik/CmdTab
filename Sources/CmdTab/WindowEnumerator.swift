@@ -139,6 +139,13 @@ enum WindowEnumerator {
     }
 
     /// Every real window AX is willing to report right now, across all apps.
+    ///
+    /// Bounded by the same `CGWindowList` filter the switcher's own candidate
+    /// scan uses, because `axWindows` trusts AX's subrole and AX calls an 84x77
+    /// layer-3 drag image an `AXDialog`. Unbounded, those entered the registry,
+    /// and the all-Spaces list is built from everything the registry knows, so
+    /// they became rows. The list here covers every state and every Space, so
+    /// bounding by it costs no off-Space or minimized window.
     static func axWindowsOfAllApps() -> [WindowRef] {
         var pids = Set<pid_t>()
         for app in NSWorkspace.shared.runningApplications where app.activationPolicy == .regular {
@@ -146,9 +153,14 @@ enum WindowEnumerator {
         }
         pids.remove(ProcessInfo.processInfo.processIdentifier)
 
+        var real: [pid_t: Set<CGWindowID>] = [:]
+        for candidate in candidates(onScreenOnly: false) {
+            real[candidate.pid, default: []].insert(candidate.id)
+        }
+
         var result: [WindowRef] = []
         for pid in pids.sorted() {
-            result += axWindows(pid: pid, keeping: nil)
+            result += axWindows(pid: pid, keeping: real[pid] ?? [])
         }
         return result
     }
