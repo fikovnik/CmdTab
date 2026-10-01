@@ -42,9 +42,15 @@ enum AXWatcher {
         // Those last two are also the only report macOS makes of a window
         // opening or being switched to *inside the app you are already in*.
         // `NSWorkspace` stays silent, because the frontmost app never changed.
+        //
+        // `AXUIElementDestroyed` is the only timely report that a window
+        // closed. The WindowServer goes on listing a closed window for as long
+        // as its app holds on to it, which Ghostty does for the life of the
+        // process, so eviction cannot wait for the window to leave that list.
         for name in [kAXTitleChangedNotification,
                      kAXFocusedWindowChangedNotification,
-                     kAXWindowCreatedNotification] {
+                     kAXWindowCreatedNotification,
+                     kAXUIElementDestroyedNotification] {
             AXObserverAddNotification(observer, app, name as CFString, nil)
         }
         // .common, so it delivers while the event tap is pumping its own run
@@ -55,6 +61,14 @@ enum AXWatcher {
 
     fileprivate static func contentsChanged(_ id: CGWindowID) {
         WindowPreview.shared.recapture(id)
+    }
+
+    /// An app destroyed an element. Apps destroy elements constantly (cells,
+    /// buttons, drag images), so all but a handful of these match nothing and
+    /// cost one keyed lookup.
+    fileprivate static func elementDestroyed(_ element: AXUIElement, pid: pid_t) {
+        guard let window = WindowRegistry.shared.forget(matching: element, pid: pid) else { return }
+        Diagnostics.note("destroyed id=\(window.id) \(window.appName) | \(window.title)")
     }
 
     /// A window of the app you are in became the focused one.
@@ -97,6 +111,23 @@ private func axWatcherCallback(_ observer: AXObserver, _ element: AXUIElement,
     // already on the main actor. The callback signature just cannot say so.
     if notification == kAXWindowCreatedNotification as String {
         MainActor.assumeIsolated { AXWatcher.windowCreated() }
+        return
+    }
+
+    // Before the role read below: a destroyed element answers no attribute.
+    // `AXUIElementGetPid` still works, because it reads the element's own
+    // fields rather than asking the app.
+    //
+    // The element itself has to cross onto the main actor, because only the
+    // registry can say which window it was, and `AXUIElement` is not Sendable.
+    // The hop is synchronous and this callback holds the only reference, so
+    // nothing can race for it; `nonisolated(unsafe)` is how that is said to a
+    // compiler that cannot see the lifetime.
+    if notification == kAXUIElementDestroyedNotification as String {
+        var destroyedPID: pid_t = 0
+        AXUIElementGetPid(element, &destroyedPID)
+        nonisolated(unsafe) let dead = element
+        MainActor.assumeIsolated { AXWatcher.elementDestroyed(dead, pid: destroyedPID) }
         return
     }
 

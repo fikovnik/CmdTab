@@ -116,6 +116,28 @@ final class WindowRegistry {
     /// fallback for an app that misses its messaging timeout.
     func remembered(_ id: CGWindowID) -> WindowRef? { known[id] }
 
+    /// Forget the window this element described, and say which it was.
+    ///
+    /// `AXUIElementDestroyed` hands over an element that is already dead, so it
+    /// cannot be asked its window id. `CFEqual` still recognises it against the
+    /// element learned when the window was first seen, locally and with no IPC.
+    /// The same join alt-tab-macos uses for this notification. The pid narrows
+    /// the scan to one app's windows before any comparison happens.
+    ///
+    /// The stamp deliberately survives. A destroy ends one app-side element
+    /// generation, which is not always the end of the window: an app that
+    /// recreates the element has its window re-learned by the next refresh, and
+    /// keeping the stamp means a premature forget costs that window its row for
+    /// one refresh cycle rather than its place in the list.
+    @discardableResult
+    func forget(matching element: AXUIElement, pid: pid_t) -> WindowRef? {
+        guard let window = known.values.first(where: {
+            $0.pid == pid && ($0.element.map { CFEqual($0, element) } ?? false)
+        }) else { return nil }
+        known[window.id] = nil
+        return window
+    }
+
     /// Fold a freshly scanned list in. The scan's titles and icons are newer
     /// than anything held here, so they win.
     func learn(_ windows: [WindowRef]) {
