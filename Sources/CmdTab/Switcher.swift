@@ -66,6 +66,14 @@ final class Switcher {
     /// also correct while the HUD is hidden.
     var pageSize: Int { max(1, min(session?.windows?.count ?? 1, hud.rowCapacity)) }
 
+    func screenParametersChanged() {
+        Diagnostics.note("screen parameters changed: \(hud.diagnosticSummary)")
+        preview.resetDisplayConfiguration()
+        hud.resetDisplayConfiguration()
+        // Keep the current selection if a display changes while Cmd is held.
+        showHUD()
+    }
+
     func start(_ mode: SwitchMode, reversed: Bool) {
         guard session == nil else { return }
         session = Session(

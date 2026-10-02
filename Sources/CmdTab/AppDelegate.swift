@@ -31,6 +31,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Diagnostics.note("launch: logging=\(Diagnostics.isLoggingEnabled)")
         WindowTracker.shared.start()
 
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.switcher.screenParametersChanged()
+                WindowTracker.shared.scheduleRefresh()
+                self?.updateStatusTitle()
+            }
+        }
+
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main
         ) { [weak self] _ in

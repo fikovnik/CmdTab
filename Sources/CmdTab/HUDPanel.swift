@@ -213,7 +213,8 @@ private final class HUDView: NSView {
 
 @MainActor
 final class HUDPanel {
-    private var panel: NSPanel?
+    private let overlay = OverlayPanel()
+    private var panel: NSPanel? { overlay.panel }
     private let view = HUDView()
 
     /// The modifier that the footer tells the user to release. It comes from
@@ -278,6 +279,10 @@ final class HUDPanel {
         panel?.orderOut(nil)
     }
 
+    func resetDisplayConfiguration() {
+        overlay.reset()
+    }
+
     /// Draws the HUD offscreen to a PNG file. Thus, a check of the layout does
     /// not need a screen capture or the Screen Recording permission.
     func render(_ windows: [Window], selected: Int, scope: String, rows: Int,
@@ -312,11 +317,7 @@ final class HUDPanel {
     }
 
     private func ensurePanel() -> NSPanel {
-        if let panel { return panel }
-        let (panel, content) = makeOverlayPanel()
-        content.addSubview(view)
-        self.panel = panel
-        return panel
+        overlay.ensurePanel(containing: view)
     }
 }
 
@@ -330,6 +331,7 @@ func makeOverlayPanel() -> (panel: NSPanel, content: NSView) {
                         backing: .buffered,
                         defer: false)
     panel.isFloatingPanel = true
+    panel.isReleasedWhenClosed = false
     panel.level = .popUpMenu
     panel.hidesOnDeactivate = false
     panel.isOpaque = false

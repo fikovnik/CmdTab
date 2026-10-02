@@ -33,7 +33,8 @@ final class WindowPreview {
         let taken: Date
     }
 
-    private var panel: NSPanel?
+    private let overlay = OverlayPanel()
+    private var panel: NSPanel? { overlay.panel }
     private let imageView = NSImageView()
     private var cache: [CGWindowID: Frame] = [:]
     /// The permission dialog is a system dialog. Show it once per launch.
@@ -72,6 +73,10 @@ final class WindowPreview {
 
     func hide() {
         panel?.orderOut(nil)
+    }
+
+    func resetDisplayConfiguration() {
+        overlay.reset()
     }
 
     /// Asks for Screen Recording permission. Off-Space titles use the same
@@ -194,14 +199,10 @@ final class WindowPreview {
     }
 
     private func ensurePanel() -> NSPanel {
-        if let panel { return panel }
-        let (panel, content) = makeOverlayPanel()
         imageView.imageScaling = .scaleProportionallyUpOrDown
         imageView.wantsLayer = true
         imageView.layer?.cornerRadius = 5
         imageView.layer?.masksToBounds = true
-        content.addSubview(imageView)
-        self.panel = panel
-        return panel
+        return overlay.ensurePanel(containing: imageView)
     }
 }
