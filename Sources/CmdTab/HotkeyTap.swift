@@ -2,7 +2,6 @@ import AppKit
 import Carbon.HIToolbox
 import CmdTabConfig
 
-#if DIAGNOSTICS
 /// Milliseconds per tick of `mach_absolute_time`, the clock of
 /// `CGEvent.timestamp`.
 private let millisecondsPerTick: Double = {
@@ -10,7 +9,6 @@ private let millisecondsPerTick: Double = {
     mach_timebase_info(&info)
     return Double(info.numer) / Double(info.denom) / 1_000_000
 }()
-#endif
 
 private let tapCallback: CGEventTapCallBack = { _, type, event, refcon in
     guard let refcon else { return Unmanaged.passUnretained(event) }
@@ -20,27 +18,25 @@ private let tapCallback: CGEventTapCallBack = { _, type, event, refcon in
     // not `Sendable`, and the switcher needs only these two values.
     let flags = event.flags
     let key = Int(event.getIntegerValueField(.keyboardEventKeycode))
-    #if DIAGNOSTICS
     // The time that the event waited before the main thread got it. The tap,
     // the reveal timer and the window scan use the same thread. Thus, a late
     // event also means a late HUD.
     //
     // A timestamp can be a few ticks later than `mach_absolute_time`. Thus,
     // the difference is signed, with a minimum of zero.
-    let ticks = Int64(bitPattern: mach_absolute_time() &- event.timestamp)
-    let lateness = ticks > 0 ? Double(ticks) * millisecondsPerTick : 0
-    #endif
+    let timestamp = event.timestamp
 
     // `start` adds the run loop source to the main run loop. Thus, this
     // callback always runs on the main thread.
     var verdict = HotkeyTap.Verdict.pass
     MainActor.assumeIsolated {
-        #if DIAGNOSTICS
-        if lateness > 50 {
-            Diagnostics.note(String(format: "event type=%d key=%d delivered %.0f ms late",
-                                    type.rawValue, key, lateness))
+        if Diagnostics.isLoggingEnabled {
+            let ticks = Int64(bitPattern: mach_absolute_time() &- timestamp)
+            let lateness = ticks > 0 ? Double(ticks) * millisecondsPerTick : 0
+            if lateness > 50 {
+                Diagnostics.note(String(format: "event type=%d delivered %.0f ms late", type.rawValue, lateness))
+            }
         }
-        #endif
         verdict = tap.handle(type: type, flags: flags, key: key)
     }
 
@@ -74,6 +70,12 @@ final class HotkeyTap {
         self.host = host
     }
 
+    var diagnosticSummary: String {
+        let enabled = machPort.map { CGEvent.tapIsEnabled(tap: $0) } ?? false
+        let triggers = bindings.switchers.map { "\($0.key.display)=\($0.value)" }.sorted().joined(separator: ", ")
+        return "Tap: created=\(machPort != nil) enabled=\(enabled) hold=\(activeHold?.rawValue.description ?? "nil") triggers=[\(triggers)]"
+    }
+
     @discardableResult
     func start() -> Bool {
         let mask = (1 << CGEventType.keyDown.rawValue)
@@ -93,6 +95,7 @@ final class HotkeyTap {
         source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, port, 0)
         CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .commonModes)
         CGEvent.tapEnable(tap: port, enable: true)
+        Diagnostics.note(diagnosticSummary)
         return true
     }
 
@@ -118,6 +121,12 @@ final class HotkeyTap {
 
         let held = HotkeyTap.modifiers(flags)
         let shift = held.contains(.shift)
+
+        if Diagnostics.isLoggingEnabled,
+           (type == .flagsChanged && switcher.isCycling)
+            || ((type == .keyDown || type == .keyUp) && bindings.switchers.keys.contains { Int($0.keyCode) == key }) {
+            Diagnostics.note("trigger event: type=\(type.rawValue) key=\(key) modifiers=\(held.rawValue) cycling=\(switcher.isCycling)")
+        }
 
         if type == .flagsChanged {
             if switcher.isCycling, !stillHeld(held) { endCycle() }

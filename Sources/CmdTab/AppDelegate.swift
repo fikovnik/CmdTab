@@ -28,6 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         applyConfig()
         installStatusItem()
+        Diagnostics.note("launch: logging=\(Diagnostics.isLoggingEnabled)")
         WindowTracker.shared.start()
 
         NSWorkspace.shared.notificationCenter.addObserver(
@@ -39,8 +40,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 WindowTracker.shared.scheduleRefresh()
                 self.updateStatusTitle()
                 #if DIAGNOSTICS
-                guard Diagnostics.autoTraceEnabled else { return }
-                Diagnostics.trace("activeSpaceDidChange")
+                guard Diagnostics.isLoggingEnabled, Diagnostics.autoTraceEnabled else { return }
+                try? Diagnostics.trace("activeSpaceDidChange")
                 #endif
             }
         }
@@ -65,6 +66,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// before the process ends.
     func applicationWillTerminate(_ notification: Notification) {
         tap.stop()
+        Diagnostics.flush()
     }
 
     private func requestAccessibility() -> Bool {
@@ -119,11 +121,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 
         let menu = NSMenu()
-        #if DIAGNOSTICS
+        let logging = menu.addItem(withTitle: "Diagnostic Logging",
+                                   action: #selector(toggleDiagnosticLogging(_:)),
+                                   keyEquivalent: "")
+        logging.target = self
+        logging.state = Diagnostics.isLoggingEnabled ? .on : .off
         menu.addItem(withTitle: "Write Diagnostics",
                      action: #selector(writeDiagnostics),
                      keyEquivalent: "").target = self
-        #endif
+        menu.addItem(.separator())
         menu.addItem(withTitle: "Accessibility Settings…",
                      action: #selector(openAccessibilitySettings),
                      keyEquivalent: "").target = self
@@ -145,13 +151,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updateStatusTitle()
     }
 
-    #if DIAGNOSTICS
-    @objc private func writeDiagnostics() {
-        Diagnostics.trace("menu")
-        NSWorkspace.shared.selectFile(Diagnostics.traceURL.path,
-                                      inFileViewerRootedAtPath: Diagnostics.traceURL.deletingLastPathComponent().path)
+    @objc private func toggleDiagnosticLogging(_ sender: NSMenuItem) {
+        Diagnostics.setLoggingEnabled(!Diagnostics.isLoggingEnabled)
+        sender.state = Diagnostics.isLoggingEnabled ? .on : .off
+        if Diagnostics.isLoggingEnabled {
+            Diagnostics.note(tap.diagnosticSummary)
+            Diagnostics.note(switcher.diagnosticSummary)
+        }
     }
-    #endif
+
+    @objc private func writeDiagnostics() {
+        do {
+            try Diagnostics.trace("menu", context: tap.diagnosticSummary + "\n" + switcher.diagnosticSummary)
+            NSWorkspace.shared.selectFile(Diagnostics.traceURL.path,
+                                          inFileViewerRootedAtPath: Diagnostics.traceURL.deletingLastPathComponent().path)
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "Could not write diagnostics"
+            alert.informativeText = error.localizedDescription
+            alert.alertStyle = .warning
+            alert.runModal()
+        }
+    }
 
     /// Screen Recording gives the previews and `kCGWindowName`, the current
     /// title of a window on another Space. macOS keeps the decision for the

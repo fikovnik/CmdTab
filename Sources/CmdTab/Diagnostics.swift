@@ -1,39 +1,60 @@
 import AppKit
+import Carbon.HIToolbox
 import os
 
-#if DIAGNOSTICS
 /// Read with `log stream --predicate 'subsystem == "net.fikovnik.cmdtab"'`.
 private let logger = Logger(subsystem: "net.fikovnik.cmdtab", category: "diagnostics")
-#endif
 
 @MainActor
 enum Diagnostics {
     /// The recent switcher events. After a failure, the user can read them and
     /// does not need to reproduce the failure.
     ///
-    /// Only `report` and `trace` read the events, and only in a `DIAGNOSTICS`
-    /// build. Thus, `note` keeps no events in a release build.
+    /// Logging is opt-in in release builds. The menu setting survives a
+    /// relaunch, so an intermittent failure can be captured across restarts.
     private static var events: [String] = []
+    private static let preferenceKey = "diagnosticLoggingEnabled"
+    private(set) static var isLoggingEnabled: Bool = {
+        if let saved = UserDefaults.standard.object(forKey: preferenceKey) as? Bool { return saved }
+        #if DIAGNOSTICS
+        return true
+        #else
+        return false
+        #endif
+    }()
 
     /// A burst of AX failures gives about 12 lines. The buffer must also keep
     /// the events before and after a burst.
     private static let capacity = 300
 
-    /// `@autoclosure`, so that a release build does not make the string. Each
+    /// `@autoclosure`, so that disabled logging does not make the string. Each
     /// call interpolates, and the AX failure path can run hundreds of times.
     static func note(_ text: @autoclosure () -> String) {
-        #if DIAGNOSTICS
-        let now = Date().timeIntervalSince1970
+        guard isLoggingEnabled else { return }
+        let now = Date()
         let message = text()
         logger.notice("\(message, privacy: .public)")
         events.append(String(format: "%9.3f  %@",
-                             now.truncatingRemainder(dividingBy: 100_000), message))
+                             now.timeIntervalSince1970.truncatingRemainder(dividingBy: 100_000), message))
         if events.count > capacity { events.removeFirst(events.count - capacity) }
-        #endif
+        log.append("\(now.ISO8601Format(.init(includingFractionalSeconds: true)))  \(message)\n")
+    }
+
+    static func setLoggingEnabled(_ enabled: Bool) {
+        guard enabled != isLoggingEnabled else { return }
+        if !enabled { note("diagnostic logging disabled") }
+        isLoggingEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: preferenceKey)
+        if enabled { note("diagnostic logging enabled") }
+    }
+
+    static func flush() {
+        log.flush()
     }
 
     static let traceURL = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Logs/CmdTab/trace.log")
+    private static let log = DiagnosticLog(url: traceURL)
 
     /// Draws the HUD offscreen with sample windows. The samples test the layout
     /// with more rows than fit, a long title and Space labels.
@@ -73,9 +94,19 @@ enum Diagnostics {
     /// - the preview cache,
     /// - the recent events,
     /// - the windows of each app.
-    static func report() -> String {
-        var out = "AXIsProcessTrusted: \(AXIsProcessTrusted())\n"
+    static func report(context: String = "") -> String {
+        var out = "macOS: \(ProcessInfo.processInfo.operatingSystemVersionString)\n"
+        out += "Process: pid=\(ProcessInfo.processInfo.processIdentifier) executable=\(Bundle.main.executableURL?.path ?? "unknown")\n"
+        out += "DiagnosticLogging: \(isLoggingEnabled)\n"
+        out += "AXIsProcessTrusted: \(AXIsProcessTrusted())\n"
         out += "ScreenRecording: \(CGPreflightScreenCaptureAccess())\n"
+        out += "SecureInput: \(IsSecureEventInputEnabled())\n"
+        out += "AppHidden: \(NSApp.isHidden)\n"
+        out += "Mouse: \(NSEvent.mouseLocation)\n"
+        for screen in NSScreen.screens {
+            out += "Screen: \(screen.localizedName) frame=\(screen.frame) visible=\(screen.visibleFrame)\n"
+        }
+        if !context.isEmpty { out += "\n== switcher state before refresh ==\n\(context)\n" }
 
         let tracker = WindowTracker.shared
         var clock = Date()
@@ -125,26 +156,9 @@ enum Diagnostics {
     /// AX gives the windows of a Space only while that Space is visible. Thus,
     /// only a trace at each Space change shows what `WindowTracker` learns, and
     /// when.
-    static func trace(_ reason: String) {
-        let manager = FileManager.default
-        try? manager.createDirectory(at: traceURL.deletingLastPathComponent(),
-                                     withIntermediateDirectories: true)
-
-        if let size = try? manager.attributesOfItem(atPath: traceURL.path)[.size] as? Int,
-           size > 512 * 1024 {
-            try? manager.removeItem(at: traceURL)
-        }
-
+    static func trace(_ reason: String, context: String = "") throws {
         var entry = "\n\n===== \(Date()) — \(reason) =====\n"
-        entry += report()
-
-        guard let data = entry.data(using: .utf8) else { return }
-        if let handle = try? FileHandle(forWritingTo: traceURL) {
-            defer { try? handle.close() }
-            _ = try? handle.seekToEnd()
-            try? handle.write(contentsOf: data)
-        } else {
-            try? data.write(to: traceURL)
-        }
+        entry += report(context: context)
+        try log.appendAndWait(entry)
     }
 }

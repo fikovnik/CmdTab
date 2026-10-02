@@ -7,7 +7,6 @@ if let flag = arguments.firstIndex(of: "--render-hud") {
     exit(0)
 }
 
-#if DIAGNOSTICS
 // Writes the diagnostics report to stdout. Unlike the menu item, this does
 // not need a GUI session. Thus, it works over ssh and in a build script.
 if arguments.contains("--report") {
@@ -15,7 +14,6 @@ if arguments.contains("--report") {
     print(Diagnostics.report())
     exit(0)
 }
-#endif
 
 let app = NSApplication.shared
 let delegate = AppDelegate()

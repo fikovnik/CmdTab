@@ -69,6 +69,13 @@ enum WindowServer {
         return result
     }
 
+    /// Space membership also describes CmdTab's overlays. A panel that lost
+    /// its all-Spaces assignment can be visible to AppKit but off screen.
+    static func spaces(ofWindow id: CGWindowID) -> [SpaceID] {
+        let raw = CGSCopySpacesForWindows(connection, 7, [NSNumber(value: id)] as CFArray)?.takeRetainedValue()
+        return (raw as? [NSNumber] ?? []).map(\.uint64Value)
+    }
+
     /// The size of a window in points.
     static func size(ofWindow id: CGWindowID) -> CGSize? {
         guard let list = CGWindowListCopyWindowInfo([.optionIncludingWindow], id)
@@ -162,6 +169,9 @@ func CGSMainConnectionID() -> CGSConnectionID
 
 @_silgen_name("CGSCopyManagedDisplaySpaces")
 func CGSCopyManagedDisplaySpaces(_ cid: CGSConnectionID) -> Unmanaged<CFArray>?
+
+@_silgen_name("CGSCopySpacesForWindows")
+private func CGSCopySpacesForWindows(_ cid: CGSConnectionID, _ mask: Int, _ windows: CFArray) -> Unmanaged<CFArray>?
 
 @_silgen_name("CGSCopyActiveMenuBarDisplayIdentifier")
 func CGSCopyActiveMenuBarDisplayIdentifier(_ cid: CGSConnectionID) -> Unmanaged<CFString>?

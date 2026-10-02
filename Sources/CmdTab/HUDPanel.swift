@@ -228,6 +228,18 @@ final class HUDPanel {
     /// is hidden. `Switcher` uses it for PgUp and PgDn.
     var rowCapacity: Int { maxRows(on: activeScreen()) }
 
+    var diagnosticSummary: String {
+        guard let panel else { return "HUD: not created" }
+        let windows = CGWindowListCopyWindowInfo(.optionAll, kCGNullWindowID)
+            as? [[String: Any]]
+        let info = windows?.first { ($0[kCGWindowNumber as String] as? NSNumber)?.intValue == panel.windowNumber }
+        // CGWindow.h specifies that a missing IsOnscreen key means false.
+        let onScreen = info.map { (($0[kCGWindowIsOnscreen as String] as? NSNumber)?.boolValue ?? false).description }
+            ?? "unknown"
+        let spaces = panel.windowNumber > 0 ? WindowServer.spaces(ofWindow: CGWindowID(panel.windowNumber)) : []
+        return "HUD: window=\(panel.windowNumber) visible=\(panel.isVisible) onScreen=\(onScreen) spaces=\(spaces) occlusion=\(panel.occlusionState.rawValue) frame=\(panel.frame) screen=\(panel.screen?.localizedName ?? "nil")"
+    }
+
     /// The frame and the screen of the panel. The preview shows next to it.
     /// `nil` while the panel is hidden.
     var anchor: (frame: NSRect, screen: NSScreen)? {
@@ -253,6 +265,7 @@ final class HUDPanel {
         view.frame = NSRect(origin: .zero, size: size)
         view.needsDisplay = true
         panel.orderFrontRegardless()
+        Diagnostics.note("HUD ordered: \(diagnosticSummary)")
     }
 
     func update(selected: Int) {

@@ -28,13 +28,19 @@ let package = Package(
             // check this.
             swiftSettings: [
                 .swiftLanguageMode(.v6),
-                // `--report`, the Write Diagnostics menu item and the trace on
-                // a Space change are only in debug builds. They ask every app
-                // over AX and write window titles to a file.
+                // Debug builds enable logging by default and support the
+                // optional full report on each Space change. Release builds
+                // enable diagnostic logging only through the menu setting.
                 .define("DIAGNOSTICS", .when(configuration: .debug)),
             ],
             linkerSettings: [.unsafeFlags(["-F", "/System/Library/PrivateFrameworks",
                                            "-framework", "SkyLight"])]
+        ),
+        .testTarget(
+            name: "CmdTabTests",
+            dependencies: ["CmdTab"],
+            path: "Tests/CmdTabTests",
+            swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         .testTarget(
             name: "CmdTabConfigTests",

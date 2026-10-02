@@ -53,6 +53,14 @@ final class Switcher {
     var isCycling: Bool { session != nil }
     var mode: SwitchMode? { session?.mode }
 
+    var diagnosticSummary: String {
+        let cycle = session.map {
+            "mode=\($0.mode) scope=\($0.scope) wantsHUD=\($0.wantsHUD) windows=\($0.windows?.count.description ?? "nil") index=\($0.index)"
+        } ?? "idle"
+        return "Switcher: \(cycle) revealTimer=\(revealTimer?.isValid == true) pendingSwitch=\(pendingSwitch != nil)\n"
+            + hud.diagnosticSummary + "\nPreview: showing=\(preview.isShowing)"
+    }
+
     /// The number of rows that the panel can show, so that PgUp and PgDn move
     /// by one page. It uses the screen and the list, not the HUD. Thus, it is
     /// also correct while the HUD is hidden.

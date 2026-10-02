@@ -9,8 +9,8 @@ APP       := build/$(APP_NAME).app
 # each download needs the permission again.
 IDENTITY ?= CmdTab Self-Signed
 
-# `debug` also builds --report, the Write Diagnostics menu item and the trace
-# on a Space change. See Diagnostics in the README.
+# `debug` enables diagnostic logging by default and supports the optional
+# full report on each Space change. See Diagnostics in the README.
 CONFIG ?= release
 
 .PHONY: all cert build test app install uninstall run stop reset-permissions clean

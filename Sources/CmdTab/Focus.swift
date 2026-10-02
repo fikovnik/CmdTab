@@ -115,14 +115,15 @@ enum Focus {
         DispatchQueue.main.async {
             MainActor.assumeIsolated { WindowTracker.shared.readFocus(of: pid) }
         }
-        #if DIAGNOSTICS
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            MainActor.assumeIsolated {
-                let focused = AXUIElement.application(pid).element(kAXFocusedWindowAttribute)?.windowID
-                let front = NSWorkspace.shared.frontmostApplication?.processIdentifier
-                Diagnostics.note("focus took=\(focused == id && front == pid) id=\(id) focused=\(focused.map(String.init) ?? "nil")")
+        if Diagnostics.isLoggingEnabled {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                MainActor.assumeIsolated {
+                    guard Diagnostics.isLoggingEnabled else { return }
+                    let focused = AXUIElement.application(pid).element(kAXFocusedWindowAttribute)?.windowID
+                    let front = NSWorkspace.shared.frontmostApplication?.processIdentifier
+                    Diagnostics.note("focus took=\(focused == id && front == pid) id=\(id) focused=\(focused.map(String.init) ?? "nil")")
+                }
             }
         }
-        #endif
     }
 }

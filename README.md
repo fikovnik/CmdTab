@@ -169,15 +169,21 @@ then shows only the app name and the Space.
 
 ## Diagnostics
 
-Only debug builds have diagnostics. They ask every app over AX and write
-window titles to a file, so the release build does not have them.
+Diagnostics are available in release builds. Logging is off by default.
+When a problem occurs:
 
-```sh
-make install CONFIG=debug
-```
+1. In the menu bar, turn on **Diagnostic Logging**. The checkmark means
+   logging is on. The setting survives a relaunch.
+2. Try the shortcut again, holding its modifiers for at least two seconds.
+3. Choose **Write Diagnostics**. CmdTab saves a report and shows the file
+   in Finder. Do this before restarting CmdTab, to keep the failed state.
+4. Turn off **Diagnostic Logging** when you have captured the problem.
 
-Then use menu bar -> **Write Diagnostics**. Or, without a GUI session, write
-the same report to stdout:
+Events and reports go to `~/Library/Logs/CmdTab/trace.log`. At 512 KiB,
+the log rotates to `trace.previous.log`, keeping the previous events.
+Logging includes window titles. File writes run outside the event tap.
+
+Without a GUI session, write a report for a new process to stdout:
 
 ```sh
 /Applications/CmdTab.app/Contents/MacOS/CmdTab --report
@@ -190,13 +196,15 @@ The report contains:
   not read the window yet.
 - the preview frames,
 - the recent switcher events,
+- the event tap, trigger modifiers, reveal timer and HUD state,
+- Accessibility, Screen Recording, Secure Input and screen geometry,
 - the windows of each app.
 
+In debug builds, logging is on by default unless the menu setting was saved.
 `touch ~/Library/Logs/CmdTab/enable-trace` also writes a report on each Space
-change. Each report does a full AX read. The file is
-`~/Library/Logs/CmdTab/trace.log`.
+change while logging is on. Each report does a full AX read.
 
-Debug builds also write each event to the unified log:
+While logging is on, events also go to the unified log:
 
 ```sh
 log stream --predicate 'subsystem == "net.fikovnik.cmdtab"'
