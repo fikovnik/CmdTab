@@ -10,8 +10,7 @@ enum Spaces {
         return SpaceLayout(managedDisplaySpaces: raw as? [[String: Any]] ?? [])
     }
 
-    /// The UUID of the display with the active menu bar, that is, the display
-    /// that has keyboard focus.
+    /// The display UUID for the active menu bar.
     static func activeDisplayIdentifier() -> String? {
         CGSCopyActiveMenuBarDisplayIdentifier(CGSMainConnectionID())?.takeRetainedValue() as String?
     }

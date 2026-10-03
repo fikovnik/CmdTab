@@ -2,16 +2,11 @@ APP_NAME  := CmdTab
 BUNDLE_ID := net.fikovnik.cmdtab
 APP       := build/$(APP_NAME).app
 
-# The code-signing identity. scripts/make-cert.sh creates it if necessary.
-# With an ad-hoc signature, macOS loses the Accessibility permission on each
-# build. With a certificate, the permission stays (see scripts/make-cert.sh).
-# CI has no keychain. Thus, CI uses IDENTITY=- for an ad-hoc signature, and
-# each download needs the permission again.
+# A stable signing certificate helps preserve Accessibility permission.
+# CI uses IDENTITY=- because no signing certificate is available.
 IDENTITY ?= CmdTab Self-Signed
 
-# `debug` enables diagnostic logging by default and supports the optional
-# full report on each Space change. See Diagnostics in the README.
-CONFIG ?= release
+# Ship and test the same release configuration.
 
 .PHONY: all cert build test app install uninstall run stop reset-permissions clean
 
@@ -23,22 +18,20 @@ ifneq ($(IDENTITY),-)
 endif
 
 build:
-	swift build -c $(CONFIG)
+	swift build -c release
 
-# The Command Line Tools have no XCTest and no swift-testing macro plugin.
-# Thus, use the Xcode toolchain if Xcode is installed. DEVELOPER_DIR does this
-# without sudo xcode-select.
+# Use one toolchain for the app and its tests.
+ifneq ($(wildcard /Applications/Xcode.app),)
+export DEVELOPER_DIR ?= /Applications/Xcode.app/Contents/Developer
+endif
+
 test:
-	@if [ -d /Applications/Xcode.app ]; then \
-		DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test; \
-	else \
-		swift test; \
-	fi
+	swift test -c release
 
 app: cert build
 	rm -rf $(APP)
 	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources
-	cp .build/$(CONFIG)/$(APP_NAME) $(APP)/Contents/MacOS/
+	cp .build/release/$(APP_NAME) $(APP)/Contents/MacOS/
 	cp Resources/Info.plist $(APP)/Contents/Info.plist
 	plutil -replace CFBundleIdentifier -string $(BUNDLE_ID) $(APP)/Contents/Info.plist
 	codesign --force --sign "$(IDENTITY)" --identifier $(BUNDLE_ID) $(APP)
@@ -58,8 +51,7 @@ run: app stop
 stop:
 	-@pkill -x $(APP_NAME) 2>/dev/null; true
 
-# Necessary only after a change of the signing identity, for example after
-# you delete the certificate. A normal build keeps the permission.
+# Reset permission after a signing identity change.
 reset-permissions:
 	tccutil reset Accessibility $(BUNDLE_ID)
 

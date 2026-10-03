@@ -2,37 +2,27 @@ import AppKit
 import CmdTabConfig
 import CmdTabModel
 
-/// Switches Spaces through the Dock.
-///
-/// macOS has no public API to switch Spaces. `CGSManagedDisplaySetCurrentSpace`
-/// changes the Space in the WindowServer, but the Dock does not do its
-/// transition. Then the menu bar of the old Space stays on screen.
-///
-/// Thus, CmdTab posts a synthetic Dock swipe, and the Dock does the switch as
-/// for a trackpad swipe. A very high velocity with almost no progress makes
-/// the switch instant. The method comes from InstantSpaceSwitcher.
+/// Post Dock swipe events to switch Spaces. Direct WindowServer changes can leave the Dock and menu bar on the old Space.
+/// The gesture fields come from InstantSpaceSwitcher.
 @MainActor
 enum SpaceSwitcher {
-    /// Shows desktop `number` (1-based) on the display with the active menu
-    /// bar. The system Ctrl+N shortcuts use the same display.
+    /// Show the desktop number on the display with the active menu bar. Desktop numbers start at one.
     static func activate(desktop number: Int) {
         guard let display = activeDisplay() else { return }
         guard let swipes = display.swipes(toDesktop: number) else {
-            Log.note("desktop-\(number): display has \(display.desktops.count) desktop(s)")
+            Diagnostics.error("desktop-\(number): display has \(display.desktops.count) desktop(s)")
             return
         }
         swipe(swipes, on: display)
     }
 
-    /// Moves `offset` Spaces to the left or right on the display with the
-    /// active menu bar. Full-screen Spaces count, as for Ctrl+Left/Right.
+    /// Move by Space offset on the active display. Include full screen Spaces and stop at either end.
     static func step(_ offset: Int) {
         guard let display = activeDisplay(), let swipes = display.swipes(by: offset) else { return }
         swipe(swipes, on: display)
     }
 
-    /// Shows `space` on its display. Returns false if no swipe was necessary
-    /// or possible.
+    /// Show the target Space. Return true only when swipe events were posted.
     static func show(_ space: SpaceID, in layout: SpaceLayout) -> Bool {
         guard let display = layout.display(containing: space),
               let swipes = display.swipes(to: space), swipes != 0
@@ -42,7 +32,7 @@ enum SpaceSwitcher {
 
     private static func activeDisplay() -> SpaceLayout.Display? {
         let display = Spaces.layout().display(identifier: Spaces.activeDisplayIdentifier())
-        if display == nil { Log.note("could not identify the display with the active menu bar") }
+        if display == nil { Diagnostics.error("could not identify the display with the active menu bar") }
         return display
     }
 
@@ -76,8 +66,7 @@ enum SpaceSwitcher {
     }
 }
 
-/// The fields of a synthetic Dock swipe. Apple does not document them. The
-/// values come from InstantSpaceSwitcher (`Sources/ISS/ISS.c`).
+/// Undocumented Dock gesture fields from InstantSpaceSwitcher, Sources/ISS/ISS.c.
 private enum DockSwipe {
     static let eventType = CGEventField(rawValue: 55)!
     static let hidType = CGEventField(rawValue: 110)!
@@ -94,8 +83,7 @@ private enum DockSwipe {
     static let horizontal: Int64 = 1
     /// Began, changed, ended. The Dock ignores a swipe that has fewer phases.
     static let phases: [Int64] = [1, 2, 4]
-    /// The smallest positive `Float`. With this progress, the switch has no
-    /// animation.
+    /// Use minimal progress to avoid a visible animation.
     static let minimumProgress = Double(Float.leastNonzeroMagnitude)
     static let velocity: Double = 2000
 }

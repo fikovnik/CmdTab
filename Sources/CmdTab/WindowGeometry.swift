@@ -1,18 +1,11 @@
 import AppKit
 import ApplicationServices
-import CmdTabConfig
+import CmdTabModel
 
-/// Reads and writes the frame of the focused window with AX.
-///
-/// All rects here use the coordinates of AX and `CGWindowList`, with the origin
-/// at the top left. `Layout` uses the same coordinates. `visibleFrame` flips
-/// the `NSScreen` rects, which have the origin at the bottom left.
+/// Read and set AX window frames. AX coordinates have a top left origin.
+/// Convert AppKit screen frames with Layout.flip before use.
 @MainActor
 enum WindowGeometry {
-    /// The AX timeout. This code runs in the event tap callback, and the system
-    /// disables a slow tap.
-    private static let timeout: Float = 0.1
-
     struct Target {
         let window: AXUIElement
         let app: AXUIElement
@@ -22,25 +15,12 @@ enum WindowGeometry {
     /// The focused window of the frontmost app.
     static func focused() -> Target? {
         guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier else {
-            Log.note("no frontmost application")
+            Diagnostics.error("no frontmost application")
             return nil
         }
-        let app = AXUIElementCreateApplication(pid)
-        AXUIElementSetMessagingTimeout(app, timeout)
-
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute as CFString,
-                                            &value) == .success,
-              let value, CFGetTypeID(value) == AXUIElementGetTypeID()
-        else {
-            Log.note("no focused window for pid \(pid)")
-            return nil
-        }
-        let window = value as! AXUIElement
-
-        var id = CGWindowID(0)
-        guard _AXUIElementGetWindow(window, &id) == .success, id != 0 else {
-            Log.note("could not resolve a window id for pid \(pid)")
+        let app = AXUIElement.application(pid)
+        guard let window = app.element(kAXFocusedWindowAttribute), let id = window.windowID else {
+            Diagnostics.error("no focused window for pid \(pid)")
             return nil
         }
         return Target(window: window, app: app, id: id)
@@ -53,16 +33,10 @@ enum WindowGeometry {
         return CGRect(origin: origin, size: size)
     }
 
-    /// Sets the position, then the size, then the position again.
-    ///
-    /// An app can limit the size to the old screen while the window is still
-    /// on that screen. An app can also move the window when the size changes.
-    /// This sequence gives the correct frame in the two cases.
+    /// Set position, size, then position. Apps can constrain size on the old display or move the window during a resize.
     static func setFrame(_ rect: CGRect, on target: Target) {
-        // If `AXEnhancedUserInterface` is on, AppKit apps do not set the
-        // position and the size correctly. An assistive app can set it and not
-        // clear it. Thus, clear it for the change, then restore it.
-        let enhanced = axBool(target.app, "AXEnhancedUserInterface")
+        // Temporarily clear AXEnhancedUserInterface. It can prevent position and size changes in AppKit apps.
+        let enhanced = target.app.bool("AXEnhancedUserInterface")
         if enhanced == true {
             setAXBool(target.app, "AXEnhancedUserInterface", false)
         }
@@ -79,16 +53,14 @@ enum WindowGeometry {
     private static let fullScreenAttribute = "AXFullScreen"
 
     static func isFullScreen(_ window: AXUIElement) -> Bool? {
-        axBool(window, fullScreenAttribute)
+        window.bool(fullScreenAttribute)
     }
 
     static func setFullScreen(_ on: Bool, for window: AXUIElement) -> Bool {
         setAXBool(window, fullScreenAttribute, on)
     }
 
-    /// The visible frame of the screen that contains most of `windowFrame`, in
-    /// AX coordinates. The visible frame does not include the menu bar and the
-    /// Dock.
+    /// The visible frame of the display with the largest window intersection, in AX coordinates.
     static func visibleFrame(containing windowFrame: CGRect) -> CGRect? {
         guard let primaryMaxY = primaryMaxY() else { return nil }
         let screens = NSScreen.screens.map {
@@ -108,8 +80,7 @@ enum WindowGeometry {
         return Layout.flip(best.screen.visibleFrame, primaryMaxY: primaryMaxY)
     }
 
-    /// The height of the display at the zero origin. Each flip between AppKit
-    /// and AX coordinates uses it.
+    /// The maximum y coordinate of the AppKit primary display. Use it for every coordinate conversion.
     static func primaryMaxY() -> CGFloat? {
         let zero = NSScreen.screens.first { $0.frame.origin == .zero }
         return (zero ?? NSScreen.screens.first)?.frame.maxY
@@ -117,11 +88,9 @@ enum WindowGeometry {
 
     // MARK: - AX plumbing
 
-    private static func axValue<T>(_ element: AXUIElement, _ attribute: String,
+    private static func axValue<T: BitwiseCopyable>(_ element: AXUIElement, _ attribute: String,
                                    _ type: AXValueType, _ empty: T) -> T? {
-        var raw: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &raw) == .success,
-              let raw, CFGetTypeID(raw) == AXValueGetTypeID()
+        guard let raw = element.value(attribute), CFGetTypeID(raw) == AXValueGetTypeID()
         else { return nil }
         var out = empty
         guard AXValueGetValue(raw as! AXValue, type, &out) else { return nil }
@@ -131,29 +100,21 @@ enum WindowGeometry {
     private static func setPosition(_ point: CGPoint, on window: AXUIElement) {
         var point = point
         guard let value = AXValueCreate(.cgPoint, &point) else { return }
-        let err = AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, value)
-        if err != .success { Log.note("set position failed: \(err.rawValue)") }
+        let err = window.set(kAXPositionAttribute, value)
+        if err != .success { Diagnostics.error("set position failed: \(err.rawValue)") }
     }
 
     private static func setSize(_ size: CGSize, on window: AXUIElement) {
         var size = size
         guard let value = AXValueCreate(.cgSize, &size) else { return }
-        let err = AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, value)
-        if err != .success { Log.note("set size failed: \(err.rawValue)") }
-    }
-
-    private static func axBool(_ element: AXUIElement, _ attribute: String) -> Bool? {
-        var raw: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &raw) == .success
-        else { return nil }
-        return raw as? Bool
+        let err = window.set(kAXSizeAttribute, value)
+        if err != .success { Diagnostics.error("set size failed: \(err.rawValue)") }
     }
 
     @discardableResult
     private static func setAXBool(_ element: AXUIElement, _ attribute: String,
                                   _ on: Bool) -> Bool {
-        AXUIElementSetAttributeValue(element, attribute as CFString,
-                                     on as CFBoolean) == .success
+        element.set(attribute, on as CFBoolean) == .success
     }
 }
 

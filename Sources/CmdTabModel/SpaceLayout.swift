@@ -3,14 +3,11 @@ import Foundation
 /// A Space identifier, as the WindowServer reports it.
 public typealias SpaceID = UInt64
 
-/// The Spaces of all displays, from one `CGSCopyManagedDisplaySpaces` read.
-///
-/// A layout is a snapshot. Read a new one for each operation, because the
-/// user can add, remove and move Spaces at any time.
+/// A snapshot of all display Spaces. Read a new snapshot for each operation.
 public struct SpaceLayout: Equatable, Sendable {
     public struct Space: Equatable, Sendable {
         public let id: SpaceID
-        /// A full-screen Space holds one window and has no desktop number.
+        /// A full screen Space has no desktop number.
         public let isFullScreen: Bool
 
         public init(id: SpaceID, isFullScreen: Bool) {
@@ -20,8 +17,7 @@ public struct SpaceLayout: Equatable, Sendable {
     }
 
     public struct Display: Equatable, Sendable {
-        /// The display UUID. The value is "Main" when all displays share one
-        /// set of Spaces ("Displays have separate Spaces" is off).
+        /// The display UUID. Main denotes one shared set of Spaces.
         public let identifier: String
         /// Left to right, in the order that Mission Control shows.
         public let spaces: [Space]
@@ -37,9 +33,7 @@ public struct SpaceLayout: Equatable, Sendable {
         /// The normal desktops, without the full-screen Spaces.
         public var desktops: [SpaceID] { spaces.filter { !$0.isFullScreen }.map(\.id) }
 
-        /// The number of one-Space moves from the current Space to `space`.
-        /// A negative value moves left. The count includes full-screen Spaces,
-        /// because a Dock swipe stops on each of them.
+        /// The signed count of Space moves to the target. Include full screen Spaces.
         public func swipes(to space: SpaceID) -> Int? {
             guard let currentSpace,
                   let from = spaces.firstIndex(where: { $0.id == currentSpace }),
@@ -50,17 +44,17 @@ public struct SpaceLayout: Equatable, Sendable {
 
         /// The moves to desktop `number` (1-based). Nil if there is no such desktop.
         public func swipes(toDesktop number: Int) -> Int? {
-            guard desktops.indices.contains(number - 1) else { return nil }
+            let desktops = desktops
+            guard number > 0, number <= desktops.count else { return nil }
             return swipes(to: desktops[number - 1])
         }
 
-        /// The moves for `offset` Spaces to the left or right, limited to the
-        /// first and the last Space.
+        /// Limit the Space offset to the first and last Space.
         public func swipes(by offset: Int) -> Int? {
             guard let currentSpace,
                   let from = spaces.firstIndex(where: { $0.id == currentSpace })
             else { return nil }
-            return min(max(from + offset, 0), spaces.count - 1) - from
+            return min(max(offset, -from), spaces.count - 1 - from)
         }
     }
 
@@ -70,9 +64,7 @@ public struct SpaceLayout: Equatable, Sendable {
         self.displays = displays
     }
 
-    /// Reads the output of `CGSCopyManagedDisplaySpaces`. Each Space has a
-    /// `ManagedSpaceID` and a `type`. Type 0 is a desktop. Other types are
-    /// full-screen Spaces.
+    /// Read the private server dictionary. Type zero denotes a desktop. Other types denote full screen Spaces.
     public init(managedDisplaySpaces: [[String: Any]]) {
         displays = managedDisplaySpaces.map { display in
             let spaces = (display["Spaces"] as? [[String: Any]] ?? []).compactMap { space -> Space? in
@@ -90,8 +82,7 @@ public struct SpaceLayout: Equatable, Sendable {
     /// The Spaces that are on screen now, one for each display.
     public var visibleSpaces: Set<SpaceID> { Set(displays.compactMap(\.currentSpace)) }
 
-    /// The display with this UUID. When all displays share one set of Spaces,
-    /// the one "Main" display matches every UUID.
+    /// Find the UUID. A shared Main display matches every UUID.
     public func display(identifier: String?) -> Display? {
         if displays.count == 1, displays[0].identifier == "Main" { return displays[0] }
         return displays.first { $0.identifier == identifier }
@@ -111,8 +102,7 @@ public struct SpaceLayout: Equatable, Sendable {
         display(containing: space)?.desktops.firstIndex(of: space).map { $0 + 1 }
     }
 
-    /// "Desktop 2", "Full Screen", with " · Display 2" when there are two or
-    /// more displays.
+    /// The Space label. Include the display number when more than one display is present.
     public func label(of space: SpaceID) -> String? {
         guard let index = displays.firstIndex(where: { display in
             display.spaces.contains { $0.id == space }

@@ -2,17 +2,15 @@ import AppKit
 import CmdTabModel
 
 /// One window that the switcher can show.
-struct Window {
+struct Window: Identifiable {
     let id: CGWindowID
     let pid: pid_t
     let appName: String
     let icon: NSImage?
     var title = ""
-    /// The Spaces that show the window, in layout order. A window that is
-    /// assigned to all desktops is on each of them.
+    /// The Spaces for this window, in layout order.
     var spaces: [SpaceID] = []
-    /// The position from the front: on a visible Space if possible, else on
-    /// its first Space.
+    /// The stack position on a visible Space, or on the first Space.
     var zOrder = 0
     /// Nil until AX returns the window.
     var element: AXUIElement?
@@ -31,12 +29,8 @@ enum WindowScope {
     case currentSpace
 }
 
-/// All windows, and the order of their last focus.
-///
-/// The WindowServer gives each window and its Spaces. AX gives the element,
-/// the title and the subrole, but `kAXWindows` contains only the windows on
-/// visible Spaces. A window keeps its element and title when it leaves a
-/// visible Space.
+/// The window records and observed focus order. The WindowServer supplies IDs and Space membership.
+/// AX supplies elements, titles, and subroles. Keep AX data when a window leaves a visible Space.
 @MainActor
 final class WindowTracker {
     static let shared = WindowTracker()
@@ -45,9 +39,7 @@ final class WindowTracker {
     private(set) var recent = RecentWindows()
     private var refreshTimer: Timer?
     private var settleTimer: Timer?
-    /// The window that `promoteFrontWindow` captured before a switch. That
-    /// frame is better than a capture after the switch, when the window can be
-    /// covered. Cleared when the focus order moves to a different window.
+    /// The ID captured before a switch. Avoid another capture after the window becomes covered.
     private var capturedBeforeSwitch: CGWindowID?
 
     func start() {
@@ -75,9 +67,12 @@ final class WindowTracker {
 
     // MARK: - Windows
 
-    /// Updates the windows and their Spaces. Only the WindowServer is asked,
-    /// not AX: a few milliseconds.
+    /// Update IDs and Space membership without an AX scan.
     func syncWithServer(_ layout: SpaceLayout) {
+        guard !layout.displays.isEmpty else {
+            Diagnostics.error("Space layout unavailable; kept existing window records")
+            return
+        }
         let apps = Self.regularApps()
         let visible = layout.visibleSpaces
         var found: [CGWindowID: Window] = [:]
@@ -101,18 +96,17 @@ final class WindowTracker {
                 found[server.id] = window
             }
         }
-        // The query does not give the windows of a hidden app. Keep them, so
-        // that the switcher lists them. `Focus` shows the app again.
+        // Keep known windows of hidden apps. The server query omits them.
         for (id, window) in windows where found[id] == nil && apps[window.pid]?.isHidden == true {
             found[id] = window
         }
         windows = found
-        recent.retain(Set(found.keys))
+        let live = Set(found.keys)
+        recent.retain(live)
+        WindowPreview.shared.retain(live)
     }
 
-    /// Updates the windows, then asks AX for the elements, titles and subroles.
-    /// This asks every app with windows, so it runs after notifications, not
-    /// on a key press.
+    /// Update server records and AX descriptions after workspace events.
     func refresh() {
         let started = Date()
         syncWithServer(Spaces.layout())
@@ -121,8 +115,7 @@ final class WindowTracker {
         for pid in Set(windows.values.map(\.pid)) {
             described.formUnion(learn(pid))
         }
-        // The AX title of a window on another Space is from the last visit.
-        // `CGWindowList` has the current title, with Screen Recording permission.
+        // Use server titles when AX cannot describe a window. Screen Recording is necessary.
         for (id, title) in WindowServer.titles() where !described.contains(id) {
             windows[id]?.title = title
         }
@@ -132,7 +125,7 @@ final class WindowTracker {
         Diagnostics.note(String(format: "refresh: %.0f ms", Date().timeIntervalSince(started) * 1000))
     }
 
-    /// Coalesces the refreshes that a burst of notifications asks for.
+    /// Use one refresh for a group of workspace events.
     func scheduleRefresh() {
         refreshTimer?.invalidate()
         let timer = Timer(timeInterval: 0.3, repeats: false) { [weak self] _ in
@@ -143,22 +136,15 @@ final class WindowTracker {
         refreshTimer = timer
     }
 
-    /// Reads the AX windows of one app and returns the IDs that AX described.
-    ///
-    /// `kAXWindows` contains the windows on visible Spaces and the minimized
-    /// windows. `kAXFocusedWindow` and `kAXMainWindow` do not depend on the
-    /// Space. Thus, they also give the key and main windows on other Spaces.
+    /// Read AX window descriptions. Focused and main window attributes can include windows on other Spaces.
     private func learn(_ pid: pid_t) -> Set<CGWindowID> {
         let values = AXUIElement.application(pid)
             .values([kAXWindowsAttribute, kAXFocusedWindowAttribute, kAXMainWindowAttribute])
-        guard let list = values[0] as? [AXUIElement] else {
-            // The status is `.cannotComplete` when the app does not answer in time.
-            Diagnostics.note("ax windows failed pid=\(pid)")
-            return []
-        }
+        let list = values[0] as? [AXUIElement] ?? []
         let single = values.dropFirst().compactMap { value in
             value.flatMap { CFGetTypeID($0) == AXUIElementGetTypeID() ? ($0 as! AXUIElement) : nil }
         }
+        if values.allSatisfy({ $0 == nil }) { Diagnostics.note("AX windows unavailable pid=\(pid)") }
 
         var described = Set<CGWindowID>()
         for element in list + single {
@@ -166,15 +152,16 @@ final class WindowTracker {
             let attributes = element.values([kAXSubroleAttribute, kAXTitleAttribute])
             let subrole = attributes[0] as? String
             windows[id]?.element = element
-            windows[id]?.isStandard = subrole == kAXStandardWindowSubrole || subrole == kAXDialogSubrole
+            if let subrole {
+                windows[id]?.isStandard = subrole == kAXStandardWindowSubrole || subrole == kAXDialogSubrole
+            }
             if let title = attributes[1] as? String { windows[id]?.title = title }
             described.insert(id)
         }
         return described
     }
 
-    /// Keeps the element and the title from an AX notification. AX sends
-    /// notifications also for windows on Spaces that are not visible.
+    /// Keep the element and title from a window notification.
     func update(_ id: CGWindowID, element: AXUIElement, title: String?) {
         guard windows[id] != nil else { return }
         if windows[id]?.element == nil { windows[id]?.element = element }
@@ -183,9 +170,7 @@ final class WindowTracker {
 
     // MARK: - Switcher list
 
-    /// The windows in switcher order. First the windows that had focus, most
-    /// recent first. Then the windows on visible Spaces, front to back. Then
-    /// the other windows, by Space.
+    /// List windows in observed focus order. Append unseen windows by visibility, Space order, and stack position.
     func list(_ scope: WindowScope, in layout: SpaceLayout) -> [Window] {
         let visible = layout.visibleSpaces
         func isVisible(_ window: Window) -> Bool { window.spaces.contains(where: visible.contains) }
@@ -211,9 +196,7 @@ final class WindowTracker {
 
     // MARK: - Focus order
 
-    /// Promotes the focused window of the front app immediately, and
-    /// captures it for the preview. This is the window that the user leaves
-    /// when a switcher cycle starts.
+    /// Put the actual focused window first and capture it before a switch.
     func promoteFrontWindow() {
         recent.settleAll()
         guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier,
@@ -226,15 +209,15 @@ final class WindowTracker {
 
     /// Reads the focused window of app `pid` as a focus answer.
     func readFocus(of pid: pid_t) {
-        guard let id = AXUIElement.application(pid).element(kAXFocusedWindowAttribute)?.windowID
+        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
+              let id = AXUIElement.application(pid).element(kAXFocusedWindowAttribute)?.windowID
         else { return }
         focusReported(id, pid: pid)
     }
 
     /// App `pid` reports `id` as its focused window.
     func focusReported(_ id: CGWindowID, pid: pid_t) {
-        // The window that had focus is still drawn now. Later, its app can
-        // release the drawing surface.
+        // Capture the previous window before its app releases the image surface.
         if let leaving = recent.order.first, leaving != id, leaving != capturedBeforeSwitch,
            let window = windows[leaving],
            window.spaces.contains(where: Spaces.layout().visibleSpaces.contains) {

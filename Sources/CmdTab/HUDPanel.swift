@@ -8,14 +8,10 @@ private let footerHeight: CGFloat = 26
 private let scrollBarWidth: CGFloat = 4
 private let minWidth: CGFloat = 300
 private let maxWidth: CGFloat = 760
-/// The maximum number of rows, so that the panel does not fill the screen. With
-/// more windows, the list scrolls with the selection.
+/// Limit the visible rows. Scroll when the selection moves outside them.
 private let rowCap = 14
 
-/// The panel has a translucent blur, so the content behind it shows through.
-/// A white page behind the panel makes the background light and the light text
-/// hard to read. The dark `scrim` sets a limit on how light the background can
-/// be. The text colors are light in all system appearances.
+/// Use a dark background over the blur to keep light text legible.
 private enum Palette {
     static let scrim = NSColor.black.withAlphaComponent(0.68)
     static let primary = NSColor.white
@@ -26,8 +22,7 @@ private enum Palette {
     static let scrollThumb = NSColor.white.withAlphaComponent(0.58)
     static var selection: NSColor { .controlAccentColor }
 
-    /// The accent color can be any color from navy to yellow. Thus, the text
-    /// color on the selection comes from the luminance of the accent color.
+    /// Select black or white text from the accent color luminance.
     static var onSelection: NSColor {
         guard let rgb = selection.usingColorSpace(.sRGB) else { return .white }
         let luminance = 0.2126 * rgb.redComponent
@@ -217,16 +212,14 @@ final class HUDPanel {
     private var panel: NSPanel? { overlay.panel }
     private let view = HUDView()
 
-    /// The modifier that the footer tells the user to release. It comes from
-    /// the trigger of the current cycle.
+    /// The trigger modifier glyphs for the footer.
     static var modifierHint = "\u{2318}"
 
     static var keyHint: String {
         "↑↓ move · → this Space · release \(modifierHint) to switch · esc cancel"
     }
 
-    /// The number of rows that fit on the active screen, also while the panel
-    /// is hidden. `Switcher` uses it for PgUp and PgDn.
+    /// The row capacity on the active screen. Page steps use this value.
     var rowCapacity: Int { maxRows(on: activeScreen()) }
 
     var diagnosticSummary: String {
@@ -283,27 +276,6 @@ final class HUDPanel {
         overlay.reset()
     }
 
-    /// Draws the HUD offscreen to a PNG file. Thus, a check of the layout does
-    /// not need a screen capture or the Screen Recording permission.
-    func render(_ windows: [Window], selected: Int, scope: String, rows: Int,
-                backdrop: NSColor, to path: String) {
-        view.items = windows
-        view.selected = selected
-        view.scope = scope
-        view.maxRows = rows
-        view.scrollToSelection()
-
-        let size = view.measure()
-        view.frame = NSRect(origin: .zero, size: size)
-        view.wantsLayer = true
-        // The worst case: the blur shows the backdrop with no change.
-        view.layer?.backgroundColor = backdrop.cgColor
-
-        guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
-        view.cacheDisplay(in: view.bounds, to: rep)
-        try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
-    }
-
     private func maxRows(on screen: NSScreen) -> Int {
         let usable = screen.visibleFrame.height - padding * 2 - footerHeight - 80
         return max(3, min(rowCap, Int(usable / rowHeight)))
@@ -319,37 +291,4 @@ final class HUDPanel {
     private func ensurePanel() -> NSPanel {
         overlay.ensurePanel(containing: view)
     }
-}
-
-/// A borderless panel with a dark blur, for the list and the preview. It does
-/// not activate CmdTab, it ignores the mouse, and it shows on all Spaces, also
-/// over a full-screen window.
-@MainActor
-func makeOverlayPanel() -> (panel: NSPanel, content: NSView) {
-    let panel = NSPanel(contentRect: .zero,
-                        styleMask: [.borderless, .nonactivatingPanel],
-                        backing: .buffered,
-                        defer: false)
-    panel.isFloatingPanel = true
-    panel.isReleasedWhenClosed = false
-    panel.level = .popUpMenu
-    panel.hidesOnDeactivate = false
-    panel.isOpaque = false
-    panel.backgroundColor = .clear
-    panel.hasShadow = true
-    panel.ignoresMouseEvents = true
-    panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
-    // The blur is dark also in Light mode. The palette is light on dark.
-    panel.appearance = NSAppearance(named: .darkAqua)
-
-    let blur = NSVisualEffectView()
-    blur.material = .hudWindow
-    blur.blendingMode = .behindWindow
-    blur.state = .active
-    blur.wantsLayer = true
-    blur.layer?.cornerRadius = 10
-    blur.layer?.masksToBounds = true
-    blur.autoresizingMask = [.width, .height]
-    panel.contentView = blur
-    return (panel, blur)
 }

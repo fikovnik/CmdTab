@@ -1,6 +1,6 @@
 import XCTest
 
-@testable import CmdTabConfig
+@testable import CmdTabModel
 
 /// A real two-display setup. The main display is 2560x1440 with a 30-point menu
 /// bar. A rotated portrait display is on its left, and its bottom edge is lower.

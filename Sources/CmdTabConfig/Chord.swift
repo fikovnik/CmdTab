@@ -1,11 +1,7 @@
 import Carbon.HIToolbox
 import Foundation
 
-/// A key and the modifiers held with it. It is the parsed form of one entry in
-/// the `keys` table of the config.
-///
-/// The modifiers use the `NSEvent` mask values, not `CGEventFlags`. These are
-/// the values that macOS stores in `com.apple.symbolichotkeys`.
+/// A key code and modifier mask. Key names refer to physical ANSI keyboard positions.
 public struct Chord: Hashable, Sendable {
     public struct Modifiers: OptionSet, Hashable, Sendable {
         public let rawValue: UInt32
@@ -17,9 +13,7 @@ public struct Chord: Hashable, Sendable {
         public static let command = Modifiers(rawValue: 0x0010_0000)
         public static let function = Modifiers(rawValue: 0x0080_0000)
 
-        /// The modifiers that an event tap can match. This set does not include
-        /// `function`, because arrow and function keys set it automatically.
-        /// Thus, an event tap cannot know if the user holds the fn key.
+        /// The supported modifier mask. Arrow and function keys set fn automatically, so configuration cannot bind fn.
         public static let tapMatchable: Modifiers = [.shift, .control, .option, .command]
     }
 
@@ -76,19 +70,11 @@ public struct Chord: Hashable, Sendable {
         self.modifiers = mods
     }
 
-    /// The character that the symbolic hotkey plist stores with the key code.
-    /// For a key without an ASCII character, macOS stores `0xFFFF`. Examples
-    /// are the arrow keys and the function keys.
-    public var charCode: UInt16 {
-        Chord.keys.values.first { $0.code == keyCode }?.char ?? 0xFFFF
-    }
-
     public func removing(_ m: Modifiers) -> Chord {
         Chord(keyCode: keyCode, modifiers: modifiers.subtracting(m))
     }
 
-    /// The modifier glyphs only, in the Apple order. The HUD footer uses them to
-    /// show which keys to release.
+    /// Modifier glyphs in Apple order. The footer shows which keys to release.
     public var modifierDisplay: String {
         var s = ""
         if modifiers.contains(.function) { s += "fn" }
@@ -101,11 +87,13 @@ public struct Chord: Hashable, Sendable {
 
     public var display: String { modifierDisplay + Chord.glyph(forKeyCode: keyCode) }
 
-    static func glyph(forKeyCode code: UInt16) -> String {
+    private static func glyph(forKeyCode code: UInt16) -> String {
         if let named = displayGlyphs[code] { return named }
-        if let entry = keys.values.first(where: { $0.code == code }), entry.char != 0xFFFF,
-           let scalar = UnicodeScalar(entry.char) {
-            return String(scalar).uppercased()
+        if let entry = keys.first(where: { $0.value.code == code }) {
+            if entry.value.char != 0xFFFF, let scalar = UnicodeScalar(entry.value.char) {
+                return String(scalar).uppercased()
+            }
+            return entry.key.uppercased()
         }
         return "?"
     }
@@ -113,6 +101,7 @@ public struct Chord: Hashable, Sendable {
     private static let displayGlyphs: [UInt16: String] = [
         UInt16(kVK_Tab): "\u{21E5}", UInt16(kVK_Space): "space",
         UInt16(kVK_Return): "\u{21A9}", UInt16(kVK_Escape): "esc",
+        UInt16(kVK_ANSI_KeypadEnter): "\u{2324}",
         UInt16(kVK_Delete): "\u{232B}", UInt16(kVK_ForwardDelete): "\u{2326}",
         UInt16(kVK_LeftArrow): "\u{2190}", UInt16(kVK_RightArrow): "\u{2192}",
         UInt16(kVK_UpArrow): "\u{2191}", UInt16(kVK_DownArrow): "\u{2193}",
@@ -120,16 +109,14 @@ public struct Chord: Hashable, Sendable {
         UInt16(kVK_Home): "\u{2196}", UInt16(kVK_End): "\u{2198}",
     ]
 
-    struct Key: Sendable {
+    private struct Key: Sendable {
         let code: UInt16
         /// The ASCII character, or `0xFFFF` if the key has no ASCII character.
         let char: UInt16
     }
 
-    /// Maps a key name to the key code and the ASCII character. The character
-    /// values are the same as the values that macOS stores in
-    /// `com.apple.symbolichotkeys` for its default shortcuts.
-    static let keys: [String: Key] = {
+    /// Map each key name or alias to a physical key code and display character.
+    private static let keys: [String: Key] = {
         var t: [String: Key] = [:]
         func add(_ name: String, _ code: Int, _ char: UInt16, aliases: [String] = []) {
             let key = Key(code: UInt16(code), char: char)

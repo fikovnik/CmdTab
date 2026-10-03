@@ -1,22 +1,22 @@
 import ApplicationServices
 
-/// Typed access to the AXUIElement C API.
-///
-/// An attribute value comes back as an untyped `CFTypeRef`. A cast to a CF
-/// type always succeeds in Swift, so an element value must have its type ID
-/// checked before use.
+/// Typed access to AX. Check CF type IDs before casts to CF types.
+@MainActor
 extension AXUIElement {
-    /// The element of an application. Each call to it waits for at most
-    /// `timeout` seconds, so a hung app cannot block CmdTab for longer.
-    static func application(_ pid: pid_t, timeout: Float = 0.1) -> AXUIElement {
-        let app = AXUIElementCreateApplication(pid)
-        AXUIElementSetMessagingTimeout(app, timeout)
-        return app
+    /// Set the timeout for every AX element in this process, including notification elements.
+    static func configureTimeout() {
+        AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), 0.1)
+    }
+
+    static func application(_ pid: pid_t) -> AXUIElement {
+        AXUIElementCreateApplication(pid)
     }
 
     func value(_ attribute: String) -> CFTypeRef? {
         var raw: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(self, attribute as CFString, &raw) == .success else { return nil }
+        let status = AXUIElementCopyAttributeValue(self, attribute as CFString, &raw)
+        recordFailure(status, operation: attribute)
+        guard status == .success else { return nil }
         return raw
     }
 
@@ -34,11 +34,13 @@ extension AXUIElement {
     /// Several attributes in one call to the app. A missing attribute gives nil.
     func values(_ attributes: [String]) -> [CFTypeRef?] {
         var raw: CFArray?
-        guard AXUIElementCopyMultipleAttributeValues(self, attributes as CFArray, [], &raw) == .success,
-              let values = raw as? [CFTypeRef], values.count == attributes.count
+        let status = AXUIElementCopyMultipleAttributeValues(self, attributes as CFArray, [], &raw)
+        recordFailure(status, operation: attributes.joined(separator: ","))
+        guard status == .success, let values = raw as? [CFTypeRef], values.count == attributes.count
         else { return attributes.map { _ in nil } }
         // The call puts an `AXValue` of type `.axError` where an attribute is missing.
         return values.map { value in
+            if CFGetTypeID(value) == CFNullGetTypeID() { return nil }
             if CFGetTypeID(value) == AXValueGetTypeID(), AXValueGetType(value as! AXValue) == .axError {
                 return nil
             }
@@ -62,17 +64,27 @@ extension AXUIElement {
 
     @discardableResult
     func set(_ attribute: String, _ value: CFTypeRef) -> AXError {
-        AXUIElementSetAttributeValue(self, attribute as CFString, value)
+        let status = AXUIElementSetAttributeValue(self, attribute as CFString, value)
+        recordFailure(status, operation: attribute)
+        return status
     }
 
     @discardableResult
     func perform(_ action: String) -> AXError {
-        AXUIElementPerformAction(self, action as CFString)
+        let status = AXUIElementPerformAction(self, action as CFString)
+        recordFailure(status, operation: action)
+        return status
     }
 
-    /// The window of app `pid` with this ID, if it is on a visible Space.
-    /// `kAXWindows` contains only the windows on visible Spaces, and the
-    /// minimized windows.
+    private func recordFailure(_ status: AXError, operation: String) {
+        if status == .cannotComplete {
+            Diagnostics.error("AX request failed or timed out pid=\(pid ?? 0) operation=\(operation)")
+        } else if status != .success {
+            Diagnostics.note("AX request pid=\(pid ?? 0) operation=\(operation) error=\(status.rawValue)")
+        }
+    }
+
+    /// The AX window with this ID. AX can omit windows on other Spaces.
     static func window(_ id: CGWindowID, pid: pid_t) -> AXUIElement? {
         application(pid).elements(kAXWindowsAttribute)?.first { $0.windowID == id }
     }

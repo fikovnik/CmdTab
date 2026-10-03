@@ -28,25 +28,20 @@ final class ChordTests: XCTestCase {
     }
 
     func testNonsenseIsRejectedRatherThanGuessedAt() {
-        assertThrows(Chord.ParseError.unknownModifier("hyper")) { try Chord(parsing: "hyper-h") }
-        assertThrows(Chord.ParseError.unknownKey("nope")) { try Chord(parsing: "cmd-nope") }
-        assertThrows(Chord.ParseError.empty) { try Chord(parsing: "") }
+        assertThrows(Chord.ParseError.unknownModifier("hyper")) { _ = try Chord(parsing: "hyper-h") }
+        assertThrows(Chord.ParseError.unknownKey("nope")) { _ = try Chord(parsing: "cmd-nope") }
+        assertThrows(Chord.ParseError.empty) { _ = try Chord(parsing: "") }
     }
 
-    /// The expected values come from `com.apple.symbolichotkeys` on a real Mac
-    /// and from the Apple `DefaultShortcutsTable.xml`.
-    func testEncodingMatchesWhatMacOSStores() throws {
-        let cases: [(String, UInt16, UInt16, UInt32)] = [
-            ("ctrl-alt-cmd-1", 49, 18, 1_835_008),
-            ("fn-ctrl-f", 102, 3, 8_650_752),
-            ("fn-ctrl-left", 65535, 123, 8_650_752),
-            ("fn-ctrl-shift-left", 65535, 123, 8_781_824),
-            ("cmd-space", 32, 49, 1_048_576),
-            ("ctrl-alt-cmd-period", 46, 47, 1_835_008),
+    func testKeyCodesAndModifierMasksMatchMacOS() throws {
+        let cases: [(String, UInt16, UInt32)] = [
+            ("ctrl-alt-cmd-1", 18, 1_835_008),
+            ("cmd-space", 49, 1_048_576),
+            ("ctrl-alt-cmd-period", 47, 1_835_008),
+            ("ctrl-alt-shift-cmd-left", 123, 1_966_080),
         ]
-        for (spec, char, key, mods) in cases {
+        for (spec, key, mods) in cases {
             let chord = try Chord(parsing: spec)
-            XCTAssertEqual(chord.charCode, char, spec)
             XCTAssertEqual(chord.keyCode, key, spec)
             XCTAssertEqual(chord.modifiers.rawValue, mods, spec)
         }
@@ -72,6 +67,11 @@ final class ChordTests: XCTestCase {
     func testRemovingAModifierLeavesTheKeyAlone() throws {
         let shifted = try Chord(parsing: "shift-cmd-tab")
         XCTAssertEqual(shifted.removing(.shift), try Chord(parsing: "cmd-tab"))
+    }
+
+    func testSpecialTriggerKeysHaveReadableNamesInDiagnostics() throws {
+        XCTAssertEqual(try Chord(parsing: "cmd-f13").display, "⌘F13")
+        XCTAssertEqual(try Chord(parsing: "ctrl-keypadenter").display, "⌃⌤")
     }
 }
 

@@ -1,16 +1,10 @@
 import AppKit
 import CmdTabModel
 
-/// Windows, Spaces and focus from the WindowServer, through private SkyLight
-/// and CGS functions. Every macOS window switcher uses these functions. A
-/// failed call gives an empty result.
+/// Private WindowServer calls for windows, Spaces, focus, and images. Keep private declarations in this file.
 @MainActor
 enum WindowServer {
-    /// The real windows on `space`, front to back.
-    ///
-    /// `kAXWindows` gives only the windows on visible Spaces. This query gives
-    /// the windows on every Space. On a visible Space, its result after
-    /// `isReal` is the same as the AX result.
+    /// Read window IDs and process IDs on any Space, in stack order.
     static func windows(onSpace space: SpaceID) -> [(id: CGWindowID, pid: pid_t)] {
         let ids = windowIDs(onSpace: space)
         guard !ids.isEmpty,
@@ -69,8 +63,7 @@ enum WindowServer {
         return result
     }
 
-    /// Space membership also describes CmdTab's overlays. A panel that lost
-    /// its all-Spaces assignment can be visible to AppKit but off screen.
+    /// Read overlay Space membership for diagnostics. An AppKit panel can be visible on an incorrect Space.
     static func spaces(ofWindow id: CGWindowID) -> [SpaceID] {
         let raw = CGSCopySpacesForWindows(connection, 7, [NSNumber(value: id)] as CFArray)?.takeRetainedValue()
         return (raw as? [NSNumber] ?? []).map(\.uint64Value)
@@ -86,33 +79,25 @@ enum WindowServer {
         return CGSize(width: width, height: height)
     }
 
-    /// The pixels of one window, at its size in points. The call is
-    /// synchronous and takes 3-18 ms.
-    ///
-    /// An app can release the drawing surface of a window that is covered or
-    /// on another Space. Chrome does this. The capture of such a window shows
-    /// the toolbar above a flat grey area.
+    /// Read window pixels at nominal resolution. Covered windows can have incomplete images.
     static func capture(window id: CGWindowID) -> CGImage? {
         var target = id
         let raw = SLSHWCaptureWindowList(connection, &target, 1, captureOptions)?.takeRetainedValue()
         return (raw as? [CGImage])?.first
     }
 
-    /// Makes `id` the front window of the front app.
-    ///
-    /// 1. `_SLPSSetFrontProcessWithOptions` makes the app the front process.
-    ///    The window ID makes it bring only this window to the front.
-    /// 2. `makeKeyWindow` makes the window the key window of the app.
-    ///
-    /// The front process is global. Thus, step 1 can also change the front app
-    /// that macOS keeps for other Spaces (alt-tab #4507).
+    /// Make this window the front window, then send the event that makes it key.
+    /// The front process call can change the stored front app on other Spaces.
     @discardableResult
     static func front(window id: CGWindowID, pid: pid_t) -> Bool {
         var psn = ProcessSerialNumber()
         guard GetProcessForPID(pid, &psn) == noErr else { return false }
-        _SLPSSetFrontProcessWithOptions(&psn, id, userGenerated)
-        makeKeyWindow(&psn, id)
-        return true
+        let result = _SLPSSetFrontProcessWithOptions(&psn, id, userGenerated)
+        guard result == .success else {
+            Diagnostics.error("front process failed id=\(id) pid=\(pid) error=\(result.rawValue)")
+            return false
+        }
+        return makeKeyWindow(&psn, id) == .success
     }
 
     /// Sets the front app that macOS keeps for `space`. This does not change
@@ -123,18 +108,11 @@ enum WindowServer {
         _ = SLSSpaceSetFrontPSN(connection, space, psn)
     }
 
-    /// Sends a synthetic mouse-down event to the window. The event makes the
-    /// window key. No public API can make the window of another app key.
-    ///
-    /// The record layout comes from yabai and alt-tab (`CGSEventRecord`):
-    /// - The buffer has 0x100 bytes, but the record declares 0xf8 bytes at
-    ///   offset 0x04. Since macOS 14.7.4 the WindowServer reads past the end of
-    ///   the record, and it stops the process on random data there.
-    /// - The click point at 0x20 is far from the window. Some apps change a NaN
-    ///   point to (0, 0), and then the click operates a control there.
-    /// - CmdTab sends only the mouse-down. It makes the window key. Without a
-    ///   mouse-up, no control can operate.
-    private static func makeKeyWindow(_ psn: inout ProcessSerialNumber, _ id: CGWindowID) {
+    /// Send a mouse down event to make the window key. The record layout comes from yabai and AltTab.
+    /// Allocate 0x100 bytes for the 0xf8-byte record because newer systems can read beyond the declared length.
+    /// Use a distant click point. Some apps replace NaN coordinates with zero.
+    /// Omit the mouse up event to prevent a control action.
+    private static func makeKeyWindow(_ psn: inout ProcessSerialNumber, _ id: CGWindowID) -> CGError {
         var bytes = [UInt8](repeating: 0, count: 0x100)
         bytes[0x04] = 0xf8
         bytes[0x08] = 0x01  // kCGEventLeftMouseDown
@@ -146,7 +124,7 @@ enum WindowServer {
         withUnsafeBytes(of: id) { raw in
             for (index, byte) in raw.enumerated() { bytes[0x3c + index] = byte }
         }
-        _ = bytes.withUnsafeMutableBufferPointer { buffer in
+        return bytes.withUnsafeMutableBufferPointer { buffer in
             SLPSPostEventRecordTo(&psn, buffer.baseAddress!)
         }
     }
@@ -176,8 +154,7 @@ private func CGSCopySpacesForWindows(_ cid: CGSConnectionID, _ mask: Int, _ wind
 @_silgen_name("CGSCopyActiveMenuBarDisplayIdentifier")
 func CGSCopyActiveMenuBarDisplayIdentifier(_ cid: CGSConnectionID) -> Unmanaged<CFString>?
 
-/// Gives the WindowServer ID of an AX element. This is the only link from
-/// the AX tree to the WindowServer.
+/// Resolve the WindowServer ID of an AX element.
 @_silgen_name("_AXUIElementGetWindow")
 func _AXUIElementGetWindow(_ element: AXUIElement,
                            _ windowID: UnsafeMutablePointer<CGWindowID>) -> AXError
@@ -231,11 +208,11 @@ private func GetProcessForPID(_ pid: pid_t, _ psn: UnsafeMutablePointer<ProcessS
 @_silgen_name("_SLPSSetFrontProcessWithOptions")
 private func _SLPSSetFrontProcessWithOptions(_ psn: UnsafeMutablePointer<ProcessSerialNumber>,
                                              _ wid: CGWindowID,
-                                             _ mode: UInt32)
+                                             _ mode: UInt32) -> CGError
 
 @_silgen_name("SLPSPostEventRecordTo")
 private func SLPSPostEventRecordTo(_ psn: UnsafeMutablePointer<ProcessSerialNumber>,
-                                   _ bytes: UnsafeMutablePointer<UInt8>) -> OSStatus
+                                   _ bytes: UnsafeMutablePointer<UInt8>) -> CGError
 
 @_silgen_name("SLSSpaceSetFrontPSN")
 private func SLSSpaceSetFrontPSN(_ cid: CGSConnectionID, _ space: SpaceID,

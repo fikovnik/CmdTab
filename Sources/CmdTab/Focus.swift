@@ -1,24 +1,9 @@
 import AppKit
 import CmdTabModel
 
-/// Gives keyboard focus to a window on any Space of any display.
-///
-/// The sequence is the same as in alt-tab:
-/// 1. Restore the window if it is minimized.
-/// 2. Make the app the front process, with this window as the key window
-///    (`WindowServer.front`).
-/// 3. Raise the window in the window stack of its app (`kAXRaiseAction`).
-/// 4. If the user left a Space that is now not visible, restore the front app
-///    of that Space (alt-tab #4507).
-///
-/// Do not use `NSRunningApplication.activate()`. Since macOS 14 it is only a
-/// request, and macOS can refuse it from an app that is not active. CmdTab is
-/// never active. Then the window comes to the front, but the menu bar stays
-/// with the previous app.
-///
-/// A window on a Space that is not visible must become visible first. Thus,
-/// `focus` switches to that Space with a Dock swipe, and does the sequence
-/// when the Space change occurs.
+/// Focus a window on any Space. First show its Space, then restore, front, and raise the window.
+/// Restore the previous front app only when its Space is no longer visible.
+/// Use private focus calls because macOS can refuse activation from an accessory app.
 @MainActor
 enum Focus {
     /// The Space and the front app before the focus.
@@ -34,12 +19,15 @@ enum Focus {
         let timer: Timer
     }
 
-    /// If the Space change does not occur in this time, do the sequence
-    /// without it. With an AX element, the Dock then switches the Space itself.
+    /// Continue after one second if the Space notification does not arrive.
     private static let spaceChangeTimeout: TimeInterval = 1
 
     /// A focus that waits for a Space change. A new focus replaces it.
     private static var pending: Pending?
+
+    static var diagnosticSummary: String {
+        pending.map { "Focus: pending id=\($0.window.id) space=\($0.space)" } ?? "Focus: idle"
+    }
 
     static func focus(_ window: Window) {
         pending?.timer.invalidate()
@@ -53,15 +41,18 @@ enum Focus {
             return
         }
 
+        Diagnostics.note("focus waiting id=\(window.id) space=\(space)")
         let timer = Timer(timeInterval: spaceChangeTimeout, repeats: false) { _ in
-            MainActor.assumeIsolated { finishPending() }
+            MainActor.assumeIsolated {
+                Diagnostics.error("Space change timed out")
+                finishPending()
+            }
         }
         RunLoop.main.add(timer, forMode: .common)
         pending = Pending(window: window, space: space, origin: origin, timer: timer)
     }
 
-    /// Call on each Space change. Continues the pending focus when its Space
-    /// is visible.
+    /// Continue the pending focus when the target Space becomes visible.
     static func spaceDidChange() {
         guard let pending, Spaces.layout().visibleSpaces.contains(pending.space) else { return }
         finishPending()
@@ -91,17 +82,15 @@ enum Focus {
         }
 
         let fronted = WindowServer.front(window: window.id, pid: window.pid)
+        if !fronted { Diagnostics.error("could not front window id=\(window.id) pid=\(window.pid)") }
 
-        // An app can replace the AX element of a window. Then the old element
-        // gives `.invalidUIElement`, and only a new element can raise the window.
+        // Read a new AX element if the cached element is invalid.
         var raise = element?.perform(kAXRaiseAction)
         if raise == .invalidUIElement, let fresh = AXUIElement.window(window.id, pid: window.pid) {
             raise = fresh.perform(kAXRaiseAction)
         }
 
-        // Do not do this for a Space that is still visible, for example on the
-        // other display. There the call can bring the old app back to the
-        // front (alt-tab #5586).
+        // Do not restore the previous app on a Space that remains visible.
         if let origin, origin.pid != window.pid, !window.spaces.isEmpty,
            !window.spaces.contains(origin.space),
            !Spaces.layout().visibleSpaces.contains(origin.space) {

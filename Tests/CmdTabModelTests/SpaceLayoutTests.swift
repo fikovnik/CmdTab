@@ -125,6 +125,13 @@ final class SpaceLayoutSwipeTests: XCTestCase {
         XCTAssertEqual(display1.swipes(by: -10), -6)
     }
 
+    func testExtremeOffsetsAndDesktopNumbersDoNotOverflow() {
+        XCTAssertEqual(display1.swipes(by: Int.max), 1)
+        XCTAssertEqual(display1.swipes(by: Int.min), -6)
+        XCTAssertNil(display1.swipes(toDesktop: Int.min))
+        XCTAssertNil(display1.swipes(toDesktop: Int.max))
+    }
+
     func testSwipesWithoutACurrentSpaceAreNil() {
         let unknown = SpaceLayout.Display(identifier: "x", spaces: display1.spaces, currentSpace: nil)
         XCTAssertNil(unknown.swipes(toDesktop: 1))

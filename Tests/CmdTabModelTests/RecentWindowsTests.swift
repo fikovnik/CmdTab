@@ -71,6 +71,16 @@ final class RecentWindowsSettleTests: XCTestCase {
         XCTAssertEqual(recent.order, [2, 1])
     }
 
+    func testClosedWindowsCannotReturnThroughAPendingFocusAnswer() {
+        var recent = RecentWindows()
+        recent.promote(1)
+        recent.report(2, pid: 100, at: 0)
+        recent.retain([1])
+        recent.settleAll()
+        XCTAssertEqual(recent.order, [1])
+        XCTAssertFalse(recent.hasPendingAnswers)
+    }
+
     func testSettleAllIgnoresTheSettleTime() {
         var recent = RecentWindows()
         recent.report(1, pid: 100, at: 0)

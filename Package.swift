@@ -5,15 +5,14 @@ let package = Package(
     name: "CmdTab",
     platforms: [.macOS(.v13)],
     targets: [
-        // Chord parsing, the config file and the action table. No AppKit and
-        // no private API. Thus, tests can run it without a WindowServer.
+        // Configuration values and keyboard state. No WindowServer connection.
         .target(
             name: "CmdTabConfig",
+            dependencies: ["CmdTabModel"],
             path: "Sources/CmdTabConfig",
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
-        // The window and Space model: pure logic, no AppKit, no private API.
-        // Thus, tests can run it without a WindowServer.
+        // Window order, traversal, and geometry. No WindowServer connection.
         .target(
             name: "CmdTabModel",
             path: "Sources/CmdTabModel",
@@ -23,15 +22,9 @@ let package = Package(
             name: "CmdTab",
             dependencies: ["CmdTabConfig", "CmdTabModel"],
             path: "Sources/CmdTab",
-            // All code in the app runs on the main thread: the event tap
-            // callback, AX and AppKit. The Swift 6 mode makes the compiler
-            // check this.
+            // AppKit and AX state use the main actor. File writes and commands use worker queues.
             swiftSettings: [
                 .swiftLanguageMode(.v6),
-                // Debug builds enable logging by default and support the
-                // optional full report on each Space change. Release builds
-                // enable diagnostic logging only through the menu setting.
-                .define("DIAGNOSTICS", .when(configuration: .debug)),
             ],
             linkerSettings: [.unsafeFlags(["-F", "/System/Library/PrivateFrameworks",
                                            "-framework", "SkyLight"])]

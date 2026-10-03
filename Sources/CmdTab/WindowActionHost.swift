@@ -1,39 +1,90 @@
 import AppKit
 import CmdTabConfig
+import CmdTabModel
 
-/// Does the window and Space actions that the config binds.
-///
-/// The actions in `CmdTabConfig` contain only the config values. This type does
-/// all the work that needs AX, AppKit or the WindowServer.
+/// Execute parsed action values with AX, the WindowServer, or an external process.
 @MainActor
-final class WindowActionHost: WindowActions {
-    /// The frames before maximize, by window ID. `toggleMaximize` restores them.
-    ///
-    /// The dictionary keeps the entries of closed windows. An entry is only a
-    /// few bytes, and a cleanup needs a timer or a notification observer.
+final class WindowActionHost {
+    /// The frames before maximize. Remove closed windows before each maximize action.
     private var restoreFrames: [CGWindowID: CGRect] = [:]
+    private var tileRequest = 0
 
-    func tile(_ edge: WindowEdge) {
-        guard let target = WindowGeometry.focused(),
-              let current = WindowGeometry.frame(of: target.window),
-              let visible = WindowGeometry.visibleFrame(containing: current)
-        else { return }
-
-        // A full-screen window has its own Space. Thus, end full screen first,
-        // then set the frame.
-        if WindowGeometry.isFullScreen(target.window) == true {
-            _ = WindowGeometry.setFullScreen(false, for: target.window)
+    func run(_ action: Action) {
+        tileRequest += 1
+        Diagnostics.note("action: \(action)")
+        switch action {
+        case .tile(let edge): tile(edge)
+        case .center: center()
+        case .toggleFullScreen: toggleFullScreen()
+        case .toggleMaximize: toggleMaximize()
+        case .desktop(.number(let number)): SpaceSwitcher.activate(desktop: number)
+        case .desktop(.previous): SpaceSwitcher.step(-1)
+        case .desktop(.next): SpaceSwitcher.step(1)
+        case .shell(let command): spawn("/bin/sh", arguments: ["-c", command])
+        case .appleScript(let source): spawn("/usr/bin/osascript", arguments: ["-e", source])
+        case .switcher: break
         }
-
-        WindowGeometry.setFrame(Layout.next(edge: edge, window: current, in: visible),
-                                on: target)
     }
 
-    /// Unlike `tile`, this does not end full screen. A full-screen window fills
-    /// the display. Thus, it has no size to center and no fraction to start the
-    /// cycle from.
-    func center() {
+    /// Start external commands on a worker queue. Record launch and exit failures.
+    private func spawn(_ executable: String, arguments: [String]) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: executable)
+            process.arguments = arguments
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+            process.terminationHandler = { process in
+                if process.terminationStatus != 0 {
+                    let status = process.terminationStatus
+                    Task { @MainActor in Diagnostics.error("command \(executable) exited with status \(status)") }
+                }
+            }
+            do { try process.run() }
+            catch {
+                let message = error.localizedDescription
+                Task { @MainActor in Diagnostics.error("could not start \(executable): \(message)") }
+            }
+        }
+    }
+
+    private func tile(_ edge: WindowEdge) {
+        guard let target = WindowGeometry.focused() else { return }
+        if WindowGeometry.isFullScreen(target.window) == true {
+            guard WindowGeometry.setFullScreen(false, for: target.window) else {
+                Diagnostics.error("could not exit full screen id=\(target.id)")
+                return
+            }
+            finishTile(edge, target: target, request: tileRequest,
+                       deadline: ProcessInfo.processInfo.systemUptime + 3)
+        } else { applyTile(edge, target: target) }
+    }
+
+    /// Wait for the full screen transition before reading the desktop frame.
+    private func finishTile(_ edge: WindowEdge, target: WindowGeometry.Target,
+                            request: Int, deadline: TimeInterval) {
+        guard request == tileRequest else { return }
+        if WindowGeometry.isFullScreen(target.window) == false {
+            applyTile(edge, target: target)
+        } else if ProcessInfo.processInfo.systemUptime >= deadline {
+            Diagnostics.error("full screen exit timed out id=\(target.id)")
+        } else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+                self?.finishTile(edge, target: target, request: request, deadline: deadline)
+            }
+        }
+    }
+
+    private func applyTile(_ edge: WindowEdge, target: WindowGeometry.Target) {
+        guard let current = WindowGeometry.frame(of: target.window),
+              let visible = WindowGeometry.visibleFrame(containing: current) else { return }
+        WindowGeometry.setFrame(Layout.next(edge: edge, window: current, in: visible), on: target)
+    }
+
+    /// Center applies only to desktop windows.
+    private func center() {
         guard let target = WindowGeometry.focused(),
+              WindowGeometry.isFullScreen(target.window) != true,
               let current = WindowGeometry.frame(of: target.window),
               let visible = WindowGeometry.visibleFrame(containing: current)
         else { return }
@@ -41,25 +92,30 @@ final class WindowActionHost: WindowActions {
         WindowGeometry.setFrame(Layout.nextCentered(window: current, in: visible), on: target)
     }
 
-    func toggleFullScreen() {
+    private func toggleFullScreen() {
         guard let target = WindowGeometry.focused() else { return }
         guard let isFullScreen = WindowGeometry.isFullScreen(target.window) else {
-            Log.note("this window does not support full screen")
+            Diagnostics.error("this window does not support full screen")
             return
         }
         if !WindowGeometry.setFullScreen(!isFullScreen, for: target.window) {
-            Log.note("full screen toggle was refused")
+            Diagnostics.error("full screen toggle was refused")
         }
     }
 
     /// Maximize fills the visible frame of the screen, so that the menu bar and
     /// the Dock stay visible. Full screen uses the full display and its own
     /// Space.
-    func toggleMaximize() {
+    private func toggleMaximize() {
         guard let target = WindowGeometry.focused(),
+              WindowGeometry.isFullScreen(target.window) != true,
               let current = WindowGeometry.frame(of: target.window),
               let visible = WindowGeometry.visibleFrame(containing: current)
         else { return }
+
+        let tracker = WindowTracker.shared
+        tracker.syncWithServer(Spaces.layout())
+        restoreFrames = restoreFrames.filter { tracker.windows[$0.key] != nil || $0.key == target.id }
 
         if Layout.isMaximized(current, in: visible) {
             guard let restore = restoreFrames.removeValue(forKey: target.id) else {
@@ -75,8 +131,4 @@ final class WindowActionHost: WindowActions {
             WindowGeometry.setFrame(visible, on: target)
         }
     }
-
-    func activateDesktop(_ number: Int) { SpaceSwitcher.activate(desktop: number) }
-
-    func stepDesktop(_ offset: Int) { SpaceSwitcher.step(offset) }
 }

@@ -9,23 +9,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var tap = HotkeyTap(switcher: switcher, host: host)
     private var statusItem: NSStatusItem?
     private var permissionTimer: Timer?
-    /// The suffix of the menu bar title. "…" until the event tap starts, "!"
-    /// if the event tap cannot start.
+    /// Show "…" before tap creation and "!" after a tap creation failure.
     private var tapMarker = "…"
-    /// "⚠" if the config file has errors. Else a typo removes a binding, and
-    /// the user does not see why.
+    /// Show "⚠" when the configuration has errors.
     private var configMarker = ""
     private var menuIcon = MenuIcon.desktopNumber
     private var configErrors: [String] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Send the messages of `CmdTabConfig` to `Diagnostics`, not to `NSLog`.
-        // `Log` can call the sink on any queue, for example the queue of a
-        // shell action. Thus, the sink continues on the main queue.
-        Log.use { message in
-            DispatchQueue.main.async { MainActor.assumeIsolated { Diagnostics.note(message) } }
-        }
-
+        AXUIElement.configureTimeout()
         applyConfig()
         installStatusItem()
         Diagnostics.note("launch: logging=\(Diagnostics.isLoggingEnabled)")
@@ -49,18 +41,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 Focus.spaceDidChange()
                 WindowTracker.shared.scheduleRefresh()
                 self.updateStatusTitle()
-                #if DIAGNOSTICS
-                guard Diagnostics.isLoggingEnabled, Diagnostics.autoTraceEnabled else { return }
-                try? Diagnostics.trace("activeSpaceDidChange")
-                #endif
+                Diagnostics.note("active Space changed")
             }
         }
 
         if requestAccessibility() {
             startTap()
         } else {
-            // The user gives the permission in System Settings, which is a
-            // different process. Thus, poll until `AXIsProcessTrusted` is true.
+            // Poll until System Settings gives the Accessibility permission.
             permissionTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] timer in
                 guard AXIsProcessTrusted() else { return }
                 timer.invalidate()
@@ -72,16 +60,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// The event tap keeps an unretained pointer to `tap`. Thus, stop the tap
-    /// before the process ends.
+    /// Stop the tap before its callback pointer becomes invalid.
     func applicationWillTerminate(_ notification: Notification) {
         tap.stop()
         Diagnostics.flush()
     }
 
     private func requestAccessibility() -> Bool {
-        // Swift imports `kAXTrustedCheckOptionPrompt` as a mutable global, and
-        // Swift 6 does not let code read it. Its value is always this string.
+        // Use the constant string. Swift imports the C constant as a mutable global.
         let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
         return AXIsProcessTrustedWithOptions(options)
     }
@@ -90,9 +76,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard tap.start() else {
             tapMarker = "!"
             updateStatusTitle()
-            NSLog("CmdTab: failed to create event tap")
+            Diagnostics.error("could not create event tap")
             return
         }
+        WindowTracker.shared.scheduleRefresh()
         tapMarker = ""
         updateStatusTitle()
     }
@@ -111,20 +98,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem?.button?.title = icon + configMarker + tapMarker
     }
 
-    /// Reads the config and applies it. Each call replaces all config state,
-    /// so the Reload menu item can call it again.
+    /// Replace the configuration snapshot on launch and reload.
     private func applyConfig() {
         let config = Config.load()
-        let installer = ConfigInstaller()
-        for binding in config.bindings {
-            binding.action.bind(binding.chord, into: installer)
-        }
-
-        tap.bindings = installer.bindings
+        tap.bindings = config.bindings
         menuIcon = config.menuIcon
         configErrors = config.errors
         configMarker = config.errors.isEmpty ? "" : "⚠"
-        for error in config.errors { Diagnostics.note("config: \(error)") }
+        for error in config.errors { Diagnostics.error("config: \(error)") }
     }
 
     private func installStatusItem() {
@@ -172,7 +153,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func writeDiagnostics() {
         do {
-            try Diagnostics.trace("menu", context: tap.diagnosticSummary + "\n" + switcher.diagnosticSummary)
+            try Diagnostics.trace("menu", context: tap.diagnosticSummary + "\n" + switcher.diagnosticSummary
+                                  + "\nConfiguration errors: " + configErrors.joined(separator: "; "))
             NSWorkspace.shared.selectFile(Diagnostics.traceURL.path,
                                           inFileViewerRootedAtPath: Diagnostics.traceURL.deletingLastPathComponent().path)
         } catch {
@@ -184,24 +166,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Screen Recording gives the previews and `kCGWindowName`, the current
-    /// title of a window on another Space. macOS keeps the decision for the
-    /// life of the process, so a grant has an effect only after a relaunch.
-    /// Thus, CmdTab asks from a menu item, not at launch.
+    /// Screen Recording permits previews and titles from other Spaces. A new permission can require an app restart.
     @objc private func enableScreenRecording() {
         WindowPreview.requestPermission()
     }
 
-    /// Opens the config file. If the file does not exist, writes a starter
-    /// config first, so that the user does not need the README.
+    /// Create the example file if necessary. Report file errors before attempting to open it.
     @objc private func openConfiguration() {
         let url = Config.defaultURL
-        if !FileManager.default.fileExists(atPath: url.path) {
-            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
-                                                      withIntermediateDirectories: true)
-            try? Data(AppDelegate.starterConfig.utf8).write(to: url)
+        do {
+            if !FileManager.default.fileExists(atPath: url.path) {
+                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
+                                                        withIntermediateDirectories: true)
+                try Data(AppDelegate.starterConfig.utf8).write(to: url, options: .withoutOverwriting)
+            }
+            guard NSWorkspace.shared.open(url) else {
+                throw CocoaError(.fileReadUnknown)
+            }
+        } catch {
+            Diagnostics.error("could not open configuration: \(error.localizedDescription)")
+            let alert = NSAlert()
+            alert.messageText = "Could not open configuration"
+            alert.informativeText = error.localizedDescription
+            alert.runModal()
         }
-        NSWorkspace.shared.open(url)
     }
 
     @objc private func reloadConfiguration() {
@@ -215,8 +203,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.runModal()
     }
 
-    /// Contains the defaults, not an empty object, so that the user sees the
-    /// file format and the action names without documentation.
+    /// An example configuration. Local actions are absent from the built-in defaults.
     private static let starterConfig = """
     {
       "keys": {

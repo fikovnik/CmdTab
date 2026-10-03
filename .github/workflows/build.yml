@@ -19,9 +19,10 @@ jobs:
       - name: Toolchain
         run: swift --version && xcodebuild -version
 
-      # IDENTITY=- signs ad-hoc. A hosted runner has no login keychain to hold
-      # the stable certificate, and a download is a new binary every time
-      # anyway, so the Accessibility grant cannot survive either way.
+      # Hosted runners use ad hoc signing.
+      - name: Tests
+        run: make test
+
       - name: Build app
         run: make app IDENTITY=-
 
@@ -31,7 +32,7 @@ jobs:
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' \
             build/CmdTab.app/Contents/Info.plist)" = net.fikovnik.cmdtab
 
-      # ditto, not zip: it keeps the bundle's symlinks and permission bits.
+      # Keep bundle links and file permissions.
       - name: Package
         run: ditto -c -k --keepParent build/CmdTab.app CmdTab.zip
 
@@ -47,12 +48,3 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "${GITHUB_REF_NAME}" CmdTab.zip
              --title "${GITHUB_REF_NAME}" --generate-notes
-
-  # The diagnostics code only compiles in the debug configuration, so a release
-  # build cannot catch a break in it. This job is what keeps it honest.
-  diagnostics-build:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Build with diagnostics
-        run: make app CONFIG=debug IDENTITY=-

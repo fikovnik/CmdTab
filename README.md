@@ -1,258 +1,245 @@
 # CmdTab
 
-A simple macOS window switcher. It lists windows in the order of their last
-focus and shows a preview of the selected window.
+CmdTab is a small macOS window switcher. It lists windows by their last focus and shows an image of the selected window.
 
-| Shortcut   | Cycles through                         | Forward | Backward |
-|------------|----------------------------------------|---------|----------|
-| `Cmd+Tab`  | All windows on all Spaces              | `Tab`   | `` ` ``  |
-| ``Cmd+` `` | The windows of the active app, on all Spaces | `` ` `` | `Tab`    |
+Requires macOS 13 or later.
 
-These are the defaults. To change them, and to bind tiling, desktop switching,
-shell commands or AppleScript to keys, see [Configuration](#configuration).
+| Default trigger | Window list | Forward key | Backward key |
+|---|---|---|---|
+| Cmd+Tab | All windows on all Spaces | Tab | Grave |
+| Cmd+Grave | Windows of the current app on all Spaces | Grave | Tab |
+
+Grave is the key with the backtick character on an ANSI keyboard.
+Key names refer to physical ANSI positions.
+
+Hold the trigger modifiers to keep the list open.
+Release any trigger modifier to select the window.
+Shift reverses the direction.
+
+The list appears after 250 ms. The first preview appears after another 200 ms without a selection change.
+A quick switch does not show the list.
+
+| Key while the list is open | Result |
+|---|---|
+| Up / Down | Move one row |
+| PageUp / PageDown | Move one page, without wrap |
+| Right | Change between all Spaces and the visible Spaces |
+| Return | Select the window immediately |
+| Escape / Period | Close the list without a switch |
+
+Trigger keys take precedence over these navigation keys.
+The list appears on the display that contains the pointer.
+The visible Space filter includes the visible Space of each display.
+
+## Build and install
+
+Use Xcode 16 or later with Swift 6.
+
+```sh
+make test
+make install
+open /Applications/CmdTab.app
+```
+
+The Makefile uses Xcode from `/Applications/Xcode.app` when available.
+Both the app and tests use the release configuration.
+Logging does not depend on a debug build.
+
+`make install` creates a signing certificate if necessary.
+A stable signing identity helps preserve the Accessibility permission between builds.
+`make app IDENTITY=-` uses an ad hoc signature for CI.
+A new ad hoc build can require the permission again.
+
+Build downloads are available from [GitHub Actions](https://github.com/fikovnik/CmdTab/actions).
+
+1. Open CmdTab.
+2. Permit the app in **System Settings → Privacy & Security**, if macOS blocks it.
+3. Give CmdTab the **Accessibility** permission.
+4. For previews, select **Enable Titles & Previews…** in the CmdTab menu.
+5. Give CmdTab the **Screen Recording** permission.
+6. Restart CmdTab if macOS requests it.
+
+CmdTab checks Accessibility each second until permission is available.
+Screen Recording is optional. Without it, window switching still works.
+Titles from other Spaces can be unavailable.
+CmdTab requests Screen Recording only from the menu command.
 
 ## Configuration
 
-The configuration file is optional: `~/.config/cmdtab/config.json`. Menu bar ->
-**Open Configuration…** makes a starter file and opens it. **Reload
-Configuration** reads the file again without a relaunch. Without a file,
-CmdTab uses the defaults.
+The optional file is `~/.config/cmdtab/config.json`.
+Without this file, only the two window switcher triggers are bound.
+
+1. Select **Open Configuration…** to create and open an example file.
+2. Edit the file.
+3. Select **Reload Configuration**.
+
+Reload replaces the configuration and ends an open window traversal.
+An invalid entry produces an error. Other valid entries remain available.
+The menu title shows `⚠` when the file has errors.
+Reload also shows the error messages.
 
 ```json
 {
   "keys": {
-    "shift-ctrl-alt-cmd-left":  "tile:left",
+    "shift-ctrl-alt-cmd-left": "tile:left",
     "shift-ctrl-alt-cmd-right": "tile:right",
-    "shift-ctrl-alt-cmd-up":    "tile:top",
-    "shift-ctrl-alt-cmd-down":  "tile:bottom",
-
+    "shift-ctrl-alt-cmd-up": "tile:top",
+    "shift-ctrl-alt-cmd-down": "tile:bottom",
     "shift-alt-cmd-f": "toggle-fullscreen",
     "shift-alt-cmd-m": "toggle-maximize",
-
     "ctrl-alt-cmd-1": "switch-desktop:1",
     "shift-ctrl-alt-cmd-e": "shell:open -a Finder ~",
     "shift-ctrl-alt-cmd-s": "applescript:display notification \"hello\""
   },
-
   "switch-all-windows": { "trigger": "cmd-tab" },
   "switch-current-app": { "trigger": "cmd-grave" },
-
   "menu": { "icon": "desktop-number" }
 }
 ```
 
-A chord is `[modifier-]* key`. The modifiers are `cmd`, `ctrl`, `alt` and
-`shift`, in any order. The usual aliases are also correct: `control`,
-`option`, `opt`, `command`. These keys are available:
+A chord contains modifier names and a key name, separated by hyphens.
+Modifiers can appear in any order.
 
-- `a`-`z`, `0`-`9`, `f1`-`f20`
-- `tab`, `space`, `return`, `escape`, `delete`
-- `left`, `right`, `up`, `down`, `pageup`, `pagedown`, `home`, `end`
-- `grave`, `minus`, `equal`, and the other punctuation keys by name or by symbol
+| Modifier | Accepted names |
+|---|---|
+| Command | `cmd`, `command` |
+| Control | `ctrl`, `control` |
+| Option | `alt`, `opt`, `option` |
+| Shift | `shift` |
 
-A `-` at the end is the minus key, thus `cmd--` is correct.
+Keys include letters, digits, `f1`–`f20`, arrows, navigation keys, and punctuation.
+Examples are `tab`, `grave`, `space`, `return`, `escape`, `delete`, `pageup`, `pagedown`, `home`, and `end`.
+Punctuation names include `minus`, `equal`, `leftbracket`, `rightbracket`, `backslash`, `semicolon`, `quote`, `comma`, `period`, and `slash`.
+The punctuation characters are also accepted, except backslash.
+A final hyphen denotes the minus key. For example, `cmd--` and `cmd-minus` are equivalent.
 
-An error in the file stops only the binding that has the error. CmdTab adds a
-line to the diagnostics and shows `⚠` in the menu bar title. The other bindings
-continue to operate. If a switcher trigger is not usable, the switcher uses its
-default trigger.
+A switcher trigger needs Command, Control, or Option.
+Shift is reserved for reverse traversal.
+The two switchers must use different physical trigger keys.
+Invalid triggers use their defaults.
+If trigger keys conflict, both switchers use their defaults.
+
+Switcher triggers and their Shift variants take precedence over local bindings.
+Duplicate chord aliases produce an error.
+The first alias in alphabetical order takes precedence.
+The `fn` modifier cannot be bound because arrow and function keys set it automatically.
+
+`menu.icon` accepts `"desktop-number"` or literal text.
+The desktop number belongs to the display with the active menu bar.
+A full screen Space shows `⇥`.
 
 ### Actions
 
 | Action | Result |
 |---|---|
-| `tile:left`, `tile:right`, `tile:top`, `tile:bottom` | Puts the window on that side of its display |
-| `tile:center` | Puts the window in the center of its display. The first press moves it. More presses change the size. |
-| `toggle-fullscreen` | Native full screen, and back |
-| `toggle-maximize` | Fills the visible frame, and puts the window back |
-| `switch-desktop:1` … `switch-desktop:16` | Shows desktop N of the display that has focus |
-| `switch-desktop:previous`, `switch-desktop:next` | Moves one Space to the left or right on the display that has focus |
-| `shell:<command>` | Runs the command with `/bin/sh -c` |
-| `applescript:<source>` | Runs the script with `osascript -e` |
+| `tile:left`, `tile:right`, `tile:top`, `tile:bottom` | Move the focused window to a display edge |
+| `tile:center` | Move the window to the center, then change its size on subsequent presses |
+| `toggle-fullscreen` | Enter or exit native full screen |
+| `toggle-maximize` | Fill the visible display frame, or restore the previous frame |
+| `switch-desktop:1` … `switch-desktop:16` | Show that desktop on the display with the active menu bar |
+| `switch-desktop:previous`, `switch-desktop:next` | Move one Space, including full screen Spaces |
+| `shell:<command>` | Run `/bin/sh -c` with the command |
+| `applescript:<source>` | Run `/usr/bin/osascript -e` with the source |
 
-An action is a name, or `<name>:<parameter>`. A parameter that is not correct
-stops only that binding, and the error message gives the correct values. For
-example, `tile:sideways` gives `expected left/right/top/bottom/center`.
+Repeated edge actions use one half, two thirds, then one third of the display.
+A different edge starts at one half.
+The current frame determines the next size.
+A 20-point tolerance permits terminal windows that resize in character cells.
 
-**Tiling.** More presses on the same side change the size: one half, two
-thirds, one third, then one half again. A press on a different side starts
-with one half. CmdTab gets the current size from the window, not from a stored
-state. Thus, the cycle continues after a relaunch or a manual resize. A terminal
-that resizes in character cells is near a fraction, not on it. CmdTab accepts a
-difference of 20 points.
+The first center action keeps an unmatched window size.
+An already centered window starts the fraction cycle.
+Center fractions apply to both dimensions.
 
-`tile:center` starts the size cycle one press later. The first press moves the
-window and keeps its size, for example a terminal that you sized manually.
-More presses apply the fractions to the width and the height.
+Maximize leaves the menu bar and Dock available.
+If no previous frame is available, the restore action uses the left half.
+Center and maximize have no effect on full screen windows.
+An edge action requests exit from full screen and waits up to three seconds before the resize.
+A newer local action cancels a pending edge action.
 
-`toggle-maximize` fills the *visible* frame, so the menu bar and the Dock stay
-available. It keeps the old frame for the next toggle. `toggle-fullscreen`
-does the same as the green button: the window gets its own Space. A tile action
-on a full-screen window first ends the full screen.
+Desktop numbers exclude full screen Spaces.
+Previous and next include them and stop at either end.
+Space switching uses private Dock gesture fields.
 
-**Desktop switching.** "Displays have separate Spaces" is the macOS default.
-Thus, `switch-desktop:2` shows the second desktop of the display that has focus.
-This is the display with the active menu bar, the same display that the system
-Ctrl+2 uses. The switch has no animation.
-
-macOS has no public API to switch Spaces. CmdTab sends a Dock swipe gesture with
-a very high velocity, so the Dock does the switch. The menu bar and Mission
-Control stay correct. `previous` and `next` also stop on full-screen Spaces, as
-Ctrl+Left and Ctrl+Right do.
-
-**Commands.** `shell:` and `applescript:` start the command and do not wait
-for it. A slow command cannot stop the event tap. AppleScript needs the
-**Automation** permission for each app that it controls. macOS asks for it at
-the first run.
-
-### Switchers and the menu bar
-
-`switch-all-windows` and `switch-current-app` have a `trigger`. Hold the
-modifiers of the trigger to keep the list open. Release a modifier to switch
-to the selected window. Thus, a trigger must have one or more of `cmd`, `ctrl`,
-`alt` and `shift`. `shift` is not part of a trigger: it reverses the direction.
-These keys in the list are fixed:
-
-- `↑`, `↓`, `PageUp`, `PageDown`: move the selection
-- `→`: show only the windows on the visible Spaces, and all windows again
-- `Return`: switch now
-- `esc`, `.`: close the list without a switch
-
-`menu.icon` is `"desktop-number"` or a text. `"desktop-number"` shows the
-number of the current desktop, or `⇥` on a full-screen Space. CmdTab shows a
-text as it is.
-
-## Build and install
-
-Download `CmdTab.zip` from a [build](https://github.com/fikovnik/CmdTab/actions)
-or a release, or build it:
-
-```sh
-make install     # build, sign with the self-signed certificate, copy to /Applications
-open /Applications/CmdTab.app
-make test        # unit tests: config parser, key table, Space layout, focus order
-```
-
-`make test` needs Xcode. The Command Line Tools have no XCTest and no
-swift-testing macro plugin. If Xcode is in `/Applications`, the target sets
-`DEVELOPER_DIR` to it.
-
-macOS does not trust a self-signed app. In **System Settings -> Privacy &
-Security**, let CmdTab run.
-
-Give the **Accessibility** permission: **System Settings -> Privacy & Security
--> Accessibility -> CmdTab**. CmdTab checks the permission each second, so a
-relaunch is not necessary.
-
-Previews and the titles of windows on other Spaces also need **Screen
-Recording**. Menu bar -> **Enable Titles & Previews…** asks for it. macOS
-applies this permission only after a relaunch of CmdTab. Without it, the
-switcher still shows all windows on all Spaces. A window that AX did not read
-then shows only the app name and the Space.
-
-## How it works
-
-- **Windows.** The WindowServer gives each window and the Spaces that show it.
-  AX gives the title, the subrole and the element, but only for windows on
-  visible Spaces. The key window and the main window of each app are the
-  exception: AX gives them on all Spaces.
-- **Order.** Only a focus change that macOS reports changes the order: an app
-  activation, or an app that reports a new focused window. If a switch does not
-  occur, the order does not change.
-- **Focus.** CmdTab makes the app the front process with this window in front,
-  makes the window key, and raises it over AX. For a window on a Space that is
-  not visible, CmdTab first switches to that Space with a Dock swipe. It does
-  not use `NSRunningApplication.activate()`, because macOS can refuse it.
-- **Previews.** CmdTab captures a window when it loses focus, because then the
-  window is in front and drawn. A window on a visible Space gets a new capture
-  when the list shows it.
+Commands run outside the keyboard callback.
+Standard output and standard error are discarded.
+Launch failures and nonzero exit status produce log errors.
+AppleScript can require Automation permission for each controlled app.
 
 ## Diagnostics
 
-Diagnostics are available in release builds. Logging is off by default.
-When a problem occurs:
+There is one logging model for all builds.
 
-1. In the menu bar, turn on **Diagnostic Logging**. The checkmark means
-   logging is on. The setting survives a relaunch.
-2. Try the shortcut again, holding its modifiers for at least two seconds.
-3. Choose **Write Diagnostics**. CmdTab saves a report and shows the file
-   in Finder. Do this before restarting CmdTab, to keep the failed state.
-4. Turn off **Diagnostic Logging** when you have captured the problem.
+| Message type | Default behavior |
+|---|---|
+| Errors | Write to the macOS unified log and retain in the recent event list |
+| Routine trace events | Record only when **Diagnostic Logging** is on |
+| Manual report | Save the current state regardless of the logging setting |
 
-Events and reports go to `~/Library/Logs/CmdTab/trace.log`. At 512 KiB,
-the log rotates to `trace.previous.log`, keeping the previous events.
-Logging includes window titles. File writes run outside the event tap.
+The recent event list holds 300 entries.
+The logging setting survives an app restart.
+Routine unified log messages use the debug level and private text.
+Errors use the error level and public text.
 
-Without a GUI session, write a report for a new process to stdout:
+To collect a fault:
+
+1. Turn on **Diagnostic Logging**.
+2. Reproduce the fault.
+3. Select **Write Diagnostics** before an app restart.
+4. Turn off **Diagnostic Logging**.
+
+CmdTab writes events and reports to `~/Library/Logs/CmdTab/trace.log`.
+Before a write exceeds 512 KiB, CmdTab moves the existing file to `trace.previous.log`.
+A single report can exceed this threshold. CmdTab does not split reports.
+
+File writes use a serial worker queue.
+Manual export waits for earlier writes.
+Reports contain window titles, configuration details, recent errors, focus state, preview memory, permissions, display geometry, and overlay state.
+Reports preserve the tracked window state without a new AX scan.
+Review these files before you share them.
+
+To view errors in Console, filter by `net.fikovnik.cmdtab`.
+For a live stream that includes routine messages:
+
+```sh
+log stream --level debug --predicate 'subsystem == "net.fikovnik.cmdtab"'
+```
+
+The following command reads windows in a new process:
 
 ```sh
 /Applications/CmdTab.app/Contents/MacOS/CmdTab --report
 ```
 
-The report contains:
+This command does not read the state of the running menu bar app.
+It needs access to the user WindowServer session for window data.
+Use the menu report to diagnose the running app.
 
-- the two switcher lists. `recent=N` is the position in the focus order, and
-  `recent=-` means that the window never had focus. `server` means that AX did
-  not read the window yet.
-- the preview frames,
-- the recent switcher events,
-- the event tap, trigger modifiers, reveal timer and HUD state,
-- Accessibility, Screen Recording, Secure Input and screen geometry,
-- the windows of each app.
+## Implementation and tests
 
-In debug builds, logging is on by default unless the menu setting was saved.
-`touch ~/Library/Logs/CmdTab/enable-trace` also writes a report on each Space
-change while logging is on. Each report does a full AX read.
+The app uses AppKit and has no external package dependencies.
+The [application model](docs/architecture.md) defines window order, traversal, actions, previews, and logging.
+The [code review](docs/code-review.md) records the corrected defects and validation limits.
 
-While logging is on, events also go to the unified log:
+`make test` checks configuration behavior, keyboard routing, traversal, focus order, Space layout, geometry, preview memory, and log rotation.
+The overlay tests need a WindowServer session.
+They report a skip when no session is available.
+The tests do not prove that another app accepts focus or resize requests.
 
-```sh
-log stream --predicate 'subsystem == "net.fikovnik.cmdtab"'
-```
+## Limitations
 
-Each focus writes `focus took=true` or `focus took=false`, after a check of
-the focused window.
-
-## Known limitations
-
-- **Windows without a preview.** A window that did not lose focus while CmdTab
-  was running has no frame. On a visible Space, CmdTab captures it when the list
-  shows it. On another Space, the capture can show only the toolbar of the
-  window: Chrome does not draw windows that are covered or on another Space.
-  `chrome://flags/#disable-backgrounding-occluded-windows` stops this, but then
-  Chrome draws windows that are not visible.
-- **Titles on other Spaces.** Without Screen Recording, a window that AX did
-  not read shows the app name and the Space. A known window keeps its last
-  title until AX reports a change.
-- **Desktop switching** uses Dock gesture fields that Apple does not document.
-  A macOS update can change them. Then `switch-desktop` does nothing.
-- **An empty desktop.** After a switch to a desktop that has no window to
-  focus, macOS can give focus to the other display. Then the next
-  `switch-desktop` acts on that display. The system Ctrl+N does the same.
-- **Hidden apps.** The WindowServer does not list the windows of a hidden app.
-  CmdTab keeps each window that it saw before the app was hidden, and shows the
-  app again on a switch. A window of an app that was hidden before CmdTab
-  started is not in the list.
-- **Secure Input.** macOS stops all event taps while a password field has
-  focus. The shortcuts do not operate until the focus leaves the field.
-- **Another app has the chord.** A launcher such as Raycast, or an app with its
-  own event tap, can get a chord before CmdTab. Karabiner-Elements changes keys
-  before all event taps. CmdTab cannot detect this. If a binding does nothing,
-  try a chord that no other app uses.
-- **Apps that resist a resize.** AX position and size are requests. A window
-  with a minimum size, or a terminal that resizes in character cells, stops
-  near the target. Some apps ignore the request.
-- **Hung apps.** The AX timeout is 100 ms for each app. Thus, an app that does
-  not answer can add 100 ms to a refresh or a focus.
-- **Full-screen apps.** A full-screen window has its own Space. Thus, `→` there
-  shows only that window.
+- Private WindowServer and Dock calls can change after a macOS update.
+- AX requests run on the main thread. Each call has a 100 ms timeout, but a scan can contain several calls.
+- Apps can refuse a resize or impose a minimum size.
+- Some apps release images of covered windows. Their previews can be incomplete or show an older image.
+- Windows on other Spaces keep their last known AX title until new title data is available.
+- Hidden apps retain only windows that CmdTab already observed.
+- Secure Input can stop keyboard events until focus leaves a password field.
+- Another event tap can receive a shortcut before CmdTab.
+- An empty desktop can move keyboard focus to another display. The next desktop action then uses that display.
 
 ## Related projects
 
-- [alt-tab-macos](https://github.com/lwouis/alt-tab-macos): a window switcher
-  with many more features. CmdTab uses its focus sequence and its rules for the
-  focus order.
-- [InstantSpaceSwitcher](https://github.com/jurplel/InstantSpaceSwitcher): the
-  source of the Dock swipe that CmdTab uses to switch Spaces.
-- [yabai](https://github.com/koekeishiya/yabai): a tiling window manager for macOS.
-- [ShiftIt](https://github.com/fikovnik/ShiftIt): my previous tiling window manager.
+- [AltTab](https://github.com/lwouis/alt-tab-macos): window focus and focus order techniques.
+- [InstantSpaceSwitcher](https://github.com/jurplel/InstantSpaceSwitcher): Dock swipe fields.
+- [yabai](https://github.com/koekeishiya/yabai): private WindowServer declarations and focus event records.
+- [ShiftIt](https://github.com/fikovnik/ShiftIt): the previous window tiling utility.
