@@ -1,6 +1,7 @@
 # CmdTab
 
 CmdTab is a small macOS window switcher. It lists windows by their last focus and shows an image of the selected window.
+Minimized windows appear at the end of the list with a “Minimized” label.
 
 Requires macOS 13 or later.
 

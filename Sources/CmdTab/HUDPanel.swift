@@ -90,8 +90,9 @@ private final class HUDView: NSView {
     }
 
     private func badge(_ window: Window) -> NSAttributedString? {
-        guard let label = window.spaceLabel else { return nil }
-        return NSAttributedString(string: label, attributes: [
+        let labels = [window.isMinimized ? "Minimized" : nil, window.spaceLabel].compactMap { $0 }
+        guard !labels.isEmpty else { return nil }
+        return NSAttributedString(string: labels.joined(separator: " · "), attributes: [
             .font: NSFont.systemFont(ofSize: 11),
             .foregroundColor: Palette.tertiary,
         ])

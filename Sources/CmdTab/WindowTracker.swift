@@ -16,6 +16,8 @@ struct Window: Identifiable {
     var element: AXUIElement?
     /// False if AX gives a subrole other than a standard window or a dialog.
     var isStandard = true
+    /// Keep the last known AX state when a window leaves a visible Space.
+    var isMinimized = false
     /// "Desktop 2", "All Desktops". Only `list` in the all-Spaces scope sets it.
     var spaceLabel: String?
 }
@@ -30,7 +32,7 @@ enum WindowScope {
 }
 
 /// The window records and observed focus order. The WindowServer supplies IDs and Space membership.
-/// AX supplies elements, titles, and subroles. Keep AX data when a window leaves a visible Space.
+/// AX supplies elements, titles, subroles, and minimized state. Keep AX data when a window leaves a visible Space.
 @MainActor
 final class WindowTracker {
     static let shared = WindowTracker()
@@ -75,10 +77,11 @@ final class WindowTracker {
         }
         let apps = Self.regularApps()
         let visible = layout.visibleSpaces
+        let minimized = Set(windows.values.filter(\.isMinimized).map(\.id))
         var found: [CGWindowID: Window] = [:]
 
         for space in layout.displays.flatMap(\.spaces) {
-            for (position, server) in WindowServer.windows(onSpace: space.id).enumerated() {
+            for (position, server) in WindowServer.windows(onSpace: space.id, includingMinimized: minimized).enumerated() {
                 if var window = found[server.id] {
                     if visible.contains(space.id), !window.spaces.contains(where: visible.contains) {
                         window.zOrder = position
@@ -109,18 +112,21 @@ final class WindowTracker {
     /// Update server records and AX descriptions after workspace events.
     func refresh() {
         let started = Date()
-        syncWithServer(Spaces.layout())
+        let layout = Spaces.layout()
+        syncWithServer(layout)
 
+        let apps = Self.regularApps()
         var described = Set<CGWindowID>()
-        for pid in Set(windows.values.map(\.pid)) {
-            described.formUnion(learn(pid))
+        // An app can have only minimized windows, none of which passed the server filter.
+        for app in apps.values {
+            described.formUnion(learn(app, in: layout))
         }
         // Use server titles when AX cannot describe a window. Screen Recording is necessary.
         for (id, title) in WindowServer.titles() where !described.contains(id) {
             windows[id]?.title = title
         }
 
-        AXEvents.sync(Set(Self.regularApps().keys))
+        AXEvents.sync(Set(apps.keys))
         // This runs on the main thread, which also handles the event tap.
         Diagnostics.note(String(format: "refresh: %.0f ms", Date().timeIntervalSince(started) * 1000))
     }
@@ -137,7 +143,8 @@ final class WindowTracker {
     }
 
     /// Read AX window descriptions. Focused and main window attributes can include windows on other Spaces.
-    private func learn(_ pid: pid_t) -> Set<CGWindowID> {
+    private func learn(_ app: NSRunningApplication, in layout: SpaceLayout) -> Set<CGWindowID> {
+        let pid = app.processIdentifier
         let values = AXUIElement.application(pid)
             .values([kAXWindowsAttribute, kAXFocusedWindowAttribute, kAXMainWindowAttribute])
         let list = values[0] as? [AXUIElement] ?? []
@@ -148,29 +155,41 @@ final class WindowTracker {
 
         var described = Set<CGWindowID>()
         for element in list + single {
-            guard let id = element.windowID, windows[id] != nil, !described.contains(id) else { continue }
-            let attributes = element.values([kAXSubroleAttribute, kAXTitleAttribute])
+            guard let id = element.windowID, !described.contains(id) else { continue }
+            let attributes = element.values([kAXSubroleAttribute, kAXTitleAttribute, kAXMinimizedAttribute])
+            if windows[id] == nil {
+                guard attributes[2] as? Bool == true else { continue }
+                var window = Window(id: id, pid: pid, appName: app.localizedName ?? "?", icon: app.icon)
+                window.spaces = WindowServer.spaces(ofWindow: id).sorted {
+                    (layout.order(of: $0) ?? .max) < (layout.order(of: $1) ?? .max)
+                }
+                window.zOrder = .max
+                windows[id] = window
+            }
             let subrole = attributes[0] as? String
             windows[id]?.element = element
             if let subrole {
                 windows[id]?.isStandard = subrole == kAXStandardWindowSubrole || subrole == kAXDialogSubrole
             }
             if let title = attributes[1] as? String { windows[id]?.title = title }
+            if let minimized = attributes[2] as? Bool { windows[id]?.isMinimized = minimized }
             described.insert(id)
         }
         return described
     }
 
-    /// Keep the element and title from a window notification.
-    func update(_ id: CGWindowID, element: AXUIElement, title: String?) {
+    /// Keep the element, title, and minimized state from a window notification.
+    func update(_ id: CGWindowID, element: AXUIElement, title: String?, isMinimized: Bool? = nil) {
         guard windows[id] != nil else { return }
         if windows[id]?.element == nil { windows[id]?.element = element }
         if let title { windows[id]?.title = title }
+        if let isMinimized { windows[id]?.isMinimized = isMinimized }
     }
 
     // MARK: - Switcher list
 
-    /// List windows in observed focus order. Append unseen windows by visibility, Space order, and stack position.
+    /// List windows in observed focus order, with minimized windows last.
+    /// Append unseen windows in each group by visibility, Space order, and stack position.
     func list(_ scope: WindowScope, in layout: SpaceLayout) -> [Window] {
         let visible = layout.visibleSpaces
         func isVisible(_ window: Window) -> Bool { window.spaces.contains(where: visible.contains) }
@@ -183,7 +202,8 @@ final class WindowTracker {
             let keyB = (isVisible(b) ? 0 : 1, b.spaces.first.flatMap(layout.order(of:)) ?? .max, b.zOrder, b.id)
             return keyA < keyB
         }
-        return recent.sorted(fallback.map(\.id)).compactMap { id in
+        let minimized = Set(candidates.filter(\.isMinimized).map(\.id))
+        return recent.sorted(fallback.map(\.id), minimized: minimized).compactMap { id in
             guard var window = windows[id] else { return nil }
             if scope == .allSpaces {
                 window.spaceLabel = window.spaces.count > 1

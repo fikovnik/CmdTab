@@ -44,10 +44,11 @@ public struct RecentWindows: Sendable {
         pending = pending.filter { live.contains($0.value.window) }
     }
 
-    /// Put known windows first. Keep unseen windows in their input order.
-    public func sorted(_ ids: [CGWindowID]) -> [CGWindowID] {
+    /// Put known windows first, then unseen windows in input order. Move minimized windows to the end.
+    public func sorted(_ ids: [CGWindowID], minimized: Set<CGWindowID> = []) -> [CGWindowID] {
         let live = Set(ids)
         let known = Set(order)
-        return order.filter(live.contains) + ids.filter { !known.contains($0) }
+        let sorted = order.filter(live.contains) + ids.filter { !known.contains($0) }
+        return sorted.filter { !minimized.contains($0) } + sorted.filter(minimized.contains)
     }
 }

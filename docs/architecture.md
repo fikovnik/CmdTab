@@ -24,13 +24,16 @@ One synchronous AX callback uses an unsafe reference to pass its C argument into
 
 `WindowTracker` owns one record per WindowServer ID.
 The WindowServer supplies process IDs, Space membership, and stack positions.
-AX adds the title, element, and subrole when available.
+AX adds the title, element, subrole, and minimized state when available.
 A missing AX description does not remove a server window.
 
 Only regular apps contribute windows.
 The server filter excludes child windows, nonzero window levels, transparent windows, and surfaces without the normal window attribute.
 AX excludes known subroles other than standard windows and dialogs.
 Unknown subroles retain the server classification.
+AX also discovers minimized windows from every regular app, including apps with no server records.
+An AX-confirmed minimized window bypasses the server filter because minimization can remove its normal window attribute.
+The server still supplies its Space membership and removes it when it closes.
 
 A server scan replaces the live records.
 Known windows from hidden apps remain available because the server omits them.
@@ -48,6 +51,11 @@ The list then contains:
 1. Observed windows, most recent first.
 2. Unseen windows on visible Spaces, in Space and stack order.
 3. Other unseen windows, in Space and stack order.
+
+Minimized windows move to the end, with the same order within each group.
+Their rows show a “Minimized” label beside the Space label when present.
+Minimize and restore notifications update the state before the next refresh.
+The stored focus order stays unchanged.
 
 The window ID resolves equal positions.
 The current app filter uses the process that was frontmost at traversal start.

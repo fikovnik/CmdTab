@@ -48,6 +48,11 @@ private func axEventsCallback(_ observer: AXObserver, _ element: AXUIElement,
     nonisolated(unsafe) let window = element
     MainActor.assumeIsolated {
         let tracker = WindowTracker.shared
+        if name == kAXWindowMiniaturizedNotification || name == kAXWindowDeminiaturizedNotification,
+           let id = window.windowID {
+            tracker.update(id, element: window, title: nil,
+                           isMinimized: name == kAXWindowMiniaturizedNotification)
+        }
         if name != kAXFocusedWindowChangedNotification && name != kAXTitleChangedNotification {
             tracker.scheduleRefresh()
             return

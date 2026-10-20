@@ -25,6 +25,29 @@ final class RecentWindowsOrderTests: XCTestCase {
         XCTAssertEqual(recent.sorted([2, 1]), [1, 2])
     }
 
+    func testMinimizedWindowsFollowAllOtherWindowsAndKeepTheirOrder() {
+        var recent = RecentWindows()
+        recent.promote(30)
+        recent.promote(10)
+        XCTAssertEqual(recent.sorted([5, 30, 6, 10, 7], minimized: [10, 6]), [30, 5, 7, 10, 6])
+    }
+
+    func testAllMinimizedWindowsKeepFocusAndFallbackOrder() {
+        var recent = RecentWindows()
+        recent.promote(30)
+        recent.promote(10)
+        XCTAssertEqual(recent.sorted([5, 30, 6, 10, 7], minimized: [5, 30, 6, 10, 7]), [10, 30, 5, 6, 7])
+    }
+
+    func testRestoredWindowsReturnToTheirFocusOrder() {
+        var recent = RecentWindows()
+        recent.promote(1)
+        recent.promote(2)
+        XCTAssertEqual(recent.sorted([1, 2, 3], minimized: [2]), [1, 3, 2])
+        XCTAssertEqual(recent.order, [2, 1])
+        XCTAssertEqual(recent.sorted([1, 2, 3]), [2, 1, 3])
+    }
+
     func testRetainRemovesClosedWindows() {
         var recent = RecentWindows()
         recent.promote(1)

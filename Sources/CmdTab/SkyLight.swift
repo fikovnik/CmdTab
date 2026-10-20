@@ -5,7 +5,9 @@ import CmdTabModel
 @MainActor
 enum WindowServer {
     /// Read window IDs and process IDs on any Space, in stack order.
-    static func windows(onSpace space: SpaceID) -> [(id: CGWindowID, pid: pid_t)] {
+    /// AX-confirmed minimized windows can have the same attributes as compositing surfaces.
+    static func windows(onSpace space: SpaceID,
+                        includingMinimized minimized: Set<CGWindowID> = []) -> [(id: CGWindowID, pid: pid_t)] {
         let ids = windowIDs(onSpace: space)
         guard !ids.isEmpty,
               let query = SLSWindowQueryWindows(connection, ids as CFArray, Int32(ids.count))?
@@ -15,8 +17,9 @@ enum WindowServer {
 
         var result: [(id: CGWindowID, pid: pid_t)] = []
         while SLSWindowIteratorAdvance(iterator) {
-            guard isReal(iterator) else { continue }
-            result.append((SLSWindowIteratorGetWindowID(iterator), SLSWindowIteratorGetPID(iterator)))
+            let id = SLSWindowIteratorGetWindowID(iterator)
+            guard minimized.contains(id) || isReal(iterator) else { continue }
+            result.append((id, SLSWindowIteratorGetPID(iterator)))
         }
         return result
     }

@@ -78,7 +78,7 @@ enum Diagnostics {
             for window in list {
                 let rank = tracker.recent.order.firstIndex(of: window.id).map(String.init) ?? "-"
                 let kind = window.element == nil ? "server" : "ax"
-                out += "  recent=\(rank) \(kind) id=\(window.id) pid=\(window.pid) spaces=\(window.spaces) [\(window.spaceLabel ?? "-")] \(window.appName) | \(window.title)\n"
+                out += "  recent=\(rank) \(kind) id=\(window.id) pid=\(window.pid) minimized=\(window.isMinimized) spaces=\(window.spaces) [\(window.spaceLabel ?? "-")] \(window.appName) | \(window.title)\n"
             }
         }
 
