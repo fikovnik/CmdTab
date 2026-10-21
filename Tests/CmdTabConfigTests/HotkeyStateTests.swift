@@ -83,4 +83,81 @@ final class HotkeyStateTests: XCTestCase {
         XCTAssertEqual(state.handle(.flagsChanged, key: 0, modifiers: .option),
                        .finish(commit: true, consume: false))
     }
+
+    func testFilterInputWaitsForTheHUDAndRequiresAnActiveTraversal() {
+        var state = keyboard()
+        let key = UInt16(kVK_ANSI_A)
+        XCTAssertEqual(state.handle(.keyDown, key: key, modifiers: .command,
+                                    text: "a", acceptsFilterInput: true), .pass)
+        _ = state.handle(.keyDown, key: UInt16(kVK_Tab), modifiers: .command)
+        XCTAssertEqual(state.handle(.keyDown, key: key, modifiers: .command, text: "a"), .consume)
+        XCTAssertEqual(state.handle(.keyDown, key: UInt16(kVK_Delete), modifiers: .command), .consume)
+        XCTAssertEqual(state.handle(.keyDown, key: key, modifiers: .command,
+                                    text: "a", acceptsFilterInput: true), .appendFilterText("a"))
+        XCTAssertEqual(state.handle(.keyDown, key: UInt16(kVK_Delete), modifiers: .command,
+                                    acceptsFilterInput: true), .deleteFilterCharacter)
+    }
+
+    func testPrintableTextIncludesPeriodSpacesShiftAndJoinedEmoji() {
+        var state = keyboard()
+        _ = state.handle(.keyDown, key: UInt16(kVK_Tab), modifiers: .command)
+        for (key, text) in [(kVK_ANSI_Period, "."), (kVK_Space, " "), (kVK_ANSI_A, "É👩‍💻")] {
+            XCTAssertEqual(state.handle(.keyDown, key: UInt16(key), modifiers: [.command, .shift],
+                                        text: text, acceptsFilterInput: true), .appendFilterText(text))
+        }
+        XCTAssertNotNil(state.hold)
+    }
+
+    func testControlAndFunctionCharactersDoNotEnterTheQuery() {
+        var state = keyboard()
+        _ = state.handle(.keyDown, key: UInt16(kVK_Tab), modifiers: .command)
+        for text: String? in [nil, "", "\t", "\n", "\u{0}", "\u{2028}", "\u{F700}", "a\u{F704}"] {
+            XCTAssertEqual(state.handle(.keyDown, key: UInt16(kVK_F1), modifiers: .command,
+                                        text: text, acceptsFilterInput: true), .consume)
+        }
+    }
+
+    func testNavigationAndConfiguredLetterTriggersTakePrecedenceOverText() {
+        var state = HotkeyState()
+        state.bindings = Config.parse(Data(#"{"switch-all-windows":{"trigger":"cmd-a"}}"#.utf8)).bindings
+        _ = state.handle(.keyDown, key: UInt16(kVK_ANSI_A), modifiers: .command)
+        XCTAssertEqual(state.handle(.keyDown, key: UInt16(kVK_ANSI_A), modifiers: .command,
+                                    text: "a", acceptsFilterInput: true), .step(1, wrap: true))
+        XCTAssertEqual(state.handle(.keyDown, key: UInt16(kVK_DownArrow), modifiers: .command,
+                                    text: "\u{F701}", acceptsFilterInput: true), .step(1, wrap: true))
+        XCTAssertEqual(state.handle(.keyDown, key: UInt16(kVK_RightArrow), modifiers: .command,
+                                    acceptsFilterInput: true), .toggleScope)
+    }
+
+    func testFilterKeysStillConsumeTheirReleasesAfterEverySessionEnding() {
+        for ending in ["commit", "cancel", "reload"] {
+            var state = keyboard()
+            _ = state.handle(.keyDown, key: UInt16(kVK_Tab), modifiers: .command)
+            _ = state.handle(.keyDown, key: UInt16(kVK_ANSI_A), modifiers: .command,
+                             text: "a", acceptsFilterInput: true)
+            _ = state.handle(.keyDown, key: UInt16(kVK_Delete), modifiers: .command, acceptsFilterInput: true)
+            switch ending {
+            case "commit":
+                XCTAssertEqual(state.handle(.flagsChanged, key: 0, modifiers: []),
+                               .finish(commit: true, consume: false))
+            case "cancel":
+                XCTAssertEqual(state.handle(.keyDown, key: UInt16(kVK_Escape), modifiers: .command),
+                               .finish(commit: false, consume: true))
+            default: state.bindings = Config.defaults.bindings
+            }
+            XCTAssertEqual(state.handle(.keyUp, key: UInt16(kVK_ANSI_A), modifiers: []), .consume)
+            XCTAssertEqual(state.handle(.keyUp, key: UInt16(kVK_Delete), modifiers: []), .consume)
+        }
+    }
+
+    func testCurrentAppAndCustomModifierSwitchersAcceptFilterText() {
+        var state = keyboard()
+        _ = state.handle(.keyDown, key: UInt16(kVK_ANSI_Grave), modifiers: .command)
+        XCTAssertEqual(state.handle(.keyDown, key: UInt16(kVK_ANSI_S), modifiers: .command,
+                                    text: "s", acceptsFilterInput: true), .appendFilterText("s"))
+        state.bindings = Config.parse(Data(#"{"switch-all-windows":{"trigger":"ctrl-alt-tab"}}"#.utf8)).bindings
+        _ = state.handle(.keyDown, key: UInt16(kVK_Tab), modifiers: [.control, .option])
+        XCTAssertEqual(state.handle(.keyDown, key: UInt16(kVK_ANSI_S), modifiers: [.control, .option],
+                                    text: "s", acceptsFilterInput: true), .appendFilterText("s"))
+    }
 }

@@ -65,6 +65,9 @@ The visible Space filter includes every display.
 
 `HotkeyState` owns the held trigger modifiers and consumed key codes.
 It produces commands from key events.
+After the HUD appears, printable text and Backspace produce filter commands.
+`HotkeyTap` reads keyboard-layout text without the held modifiers, retaining Shift.
+Trigger keys and navigation take precedence over filter text.
 It performs no window operations.
 Consumed key releases remain consumed after commit, cancellation, or configuration reload.
 
@@ -74,13 +77,23 @@ Steps before the scan remain in the offset.
 Ordinary steps wrap.
 Page steps stop at the list boundaries.
 A replacement list keeps the selected window by ID.
-If the selected ID disappears, the first row becomes selected.
+If the selected ID disappears or a completed list has no selection, the first row becomes selected.
+Only the first scan retains the pending selection offset.
 
 `Switcher` owns one session, two timers, and the list panel.
-A session stores the mode, process filter, Space filter, traversal, and reveal state.
+A session stores the mode, process filter, Space filter, candidates, text filter, traversal, and reveal state.
 The reveal timer expires after 250 ms.
 The scan runs after the event tap returns.
 The list appears when both are complete.
+
+`WindowSearch` matches a case-insensitive substring in either the app name or window title.
+It returns UTF-16 ranges for every occurrence, including overlaps.
+The HUD draws these ranges with black text on a yellow background.
+Text edits filter the stored candidates without a new window scan.
+Space changes replace the candidates and reapply the same query.
+An initial list with one window is suppressed. After the HUD appears, it can show any number of rows.
+An empty result keeps the HUD open, hides the preview, and has no switch target.
+Backspace removes one Swift character. An empty query restores every candidate.
 
 Commit copies the session, ends keyboard capture, and queues its focus request.
 Each queued request owns its session.

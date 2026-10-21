@@ -10,6 +10,8 @@ public struct HotkeyState {
         case finish(commit: Bool, consume: Bool)
         case step(Int, wrap: Bool)
         case toggleScope
+        case appendFilterText(String)
+        case deleteFilterCharacter
         case perform(Action)
 
         public var consumesEvent: Bool {
@@ -30,7 +32,8 @@ public struct HotkeyState {
 
     public init() {}
 
-    public mutating func handle(_ event: Event, key: UInt16, modifiers: Chord.Modifiers) -> Command {
+    public mutating func handle(_ event: Event, key: UInt16, modifiers: Chord.Modifiers,
+                                text: String? = nil, acceptsFilterInput: Bool = false) -> Command {
         let consumedRelease = event == .keyUp && consumedKeys.remove(key) != nil
         if let hold, !modifiers.isSuperset(of: hold) {
             self.hold = nil
@@ -54,14 +57,17 @@ public struct HotkeyState {
                 return .step(reverse ? -delta : delta, wrap: true)
             }
             switch Int(key) {
-            case kVK_Escape, kVK_ANSI_Period: return finish(commit: false)
+            case kVK_Escape: return finish(commit: false)
             case kVK_Return, kVK_ANSI_KeypadEnter: return finish(commit: true)
             case kVK_RightArrow: return .toggleScope
             case kVK_DownArrow: return .step(1, wrap: true)
             case kVK_UpArrow: return .step(-1, wrap: true)
             case kVK_PageDown: return .step(1, wrap: false)
             case kVK_PageUp: return .step(-1, wrap: false)
-            default: return .consume
+            case kVK_Delete: return acceptsFilterInput ? .deleteFilterCharacter : .consume
+            default:
+                guard acceptsFilterInput, let text, Self.isFilterText(text) else { return .consume }
+                return .appendFilterText(text)
             }
         }
 
@@ -83,5 +89,15 @@ public struct HotkeyState {
         hold = nil
         mode = nil
         return .finish(commit: commit, consume: true)
+    }
+
+    private static func isFilterText(_ text: String) -> Bool {
+        !text.isEmpty && text.unicodeScalars.allSatisfy { scalar in
+            switch scalar.properties.generalCategory {
+            case .control, .lineSeparator, .paragraphSeparator: false
+            // AppKit represents function and navigation keys with private-use characters.
+            default: !(0xF700...0xF8FF).contains(scalar.value)
+            }
+        }
     }
 }

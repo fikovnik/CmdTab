@@ -13,6 +13,7 @@ private let tapCallback: CGEventTapCallBack = { _, type, event, refcon in
     let tap = Unmanaged<HotkeyTap>.fromOpaque(refcon).takeUnretainedValue()
     let flags = event.flags
     let key = UInt16(clamping: event.getIntegerValueField(.keyboardEventKeycode))
+    let text = type == .keyDown ? NSEvent(cgEvent: event)?.charactersIgnoringModifiers : nil
     let timestamp = event.timestamp
     var consume = false
     // The tap source runs on the main run loop.
@@ -23,7 +24,7 @@ private let tapCallback: CGEventTapCallBack = { _, type, event, refcon in
                 Diagnostics.note(String(format: "event type=%d delivered %.0f ms late", type.rawValue, delay))
             }
         }
-        consume = tap.handle(type: type, flags: flags, key: key)
+        consume = tap.handle(type: type, flags: flags, key: key, text: text)
     }
     return consume ? nil : Unmanaged.passUnretained(event)
 }
@@ -82,17 +83,17 @@ final class HotkeyTap {
         self.machPort = nil
     }
 
-    fileprivate func handle(type: CGEventType, flags: CGEventFlags, key: UInt16) -> Bool {
+    fileprivate func handle(type: CGEventType, flags: CGEventFlags, key: UInt16, text: String?) -> Bool {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             Diagnostics.error("tap disabled type=\(type.rawValue); re-enabling")
             if let machPort { CGEvent.tapEnable(tap: machPort, enable: true) }
             return false
         }
-        let event: HotkeyState.Event
+        let input: HotkeyState.Event
         switch type {
-        case .keyDown: event = .keyDown
-        case .keyUp: event = .keyUp
-        case .flagsChanged: event = .flagsChanged
+        case .keyDown: input = .keyDown
+        case .keyUp: input = .keyUp
+        case .flagsChanged: input = .flagsChanged
         default: return false
         }
         var modifiers = Chord.Modifiers()
@@ -101,7 +102,9 @@ final class HotkeyTap {
         if flags.contains(.maskAlternate) { modifiers.insert(.option) }
         if flags.contains(.maskCommand) { modifiers.insert(.command) }
 
-        let command = keyboard.handle(event, key: key, modifiers: modifiers)
+        let acceptsFilterInput = switcher.acceptsFilterInput
+        let command = keyboard.handle(input, key: key, modifiers: modifiers,
+                                      text: text, acceptsFilterInput: acceptsFilterInput)
         if command != .pass {
             Diagnostics.note("key type=\(type.rawValue) key=\(key) modifiers=\(modifiers.rawValue) command=\(command)")
         }
@@ -115,6 +118,8 @@ final class HotkeyTap {
         case .step(let delta, let wrap):
             switcher.step(wrap ? delta : delta * switcher.pageSize, wrap: wrap)
         case .toggleScope: switcher.toggleScope()
+        case .appendFilterText(let text): switcher.appendFilterText(text)
+        case .deleteFilterCharacter: switcher.deleteFilterCharacter()
         case .perform(let action):
             // AX and process creation must occur after the event tap returns.
             DispatchQueue.main.async { [host] in host.run(action) }

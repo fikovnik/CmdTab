@@ -25,8 +25,18 @@ A quick switch does not show the list.
 | Up / Down | Move one row |
 | PageUp / PageDown | Move one page, without wrap |
 | Right | Change between all Spaces and the visible Spaces |
+| Type text | Filter by app name or window title |
+| Backspace | Remove the last filter character |
 | Return | Select the window immediately |
-| Escape / Period | Close the list without a switch |
+| Escape | Close the list without a switch |
+
+After the list appears, type while holding the trigger modifiers to filter it.
+The filter matches text anywhere in the app name or window title, ignoring case.
+Spaces, accents, and punctuation are literal. Matching text has a yellow background.
+Backspace removes one character. Removing all characters restores the list.
+The selected window stays selected while it matches. Otherwise, the first result becomes selected.
+With no matches, the list stays open and the preview disappears.
+Releasing the trigger modifiers then closes the list without switching windows.
 
 Trigger keys take precedence over these navigation keys.
 The list appears on the display that contains the pointer.

@@ -1,4 +1,5 @@
 import AppKit
+import CmdTabModel
 
 private let rowHeight: CGFloat = 28
 private let iconSize: CGFloat = 20
@@ -20,6 +21,7 @@ private enum Palette {
     static let separator = NSColor.white.withAlphaComponent(0.16)
     static let scrollTrack = NSColor.white.withAlphaComponent(0.16)
     static let scrollThumb = NSColor.white.withAlphaComponent(0.58)
+    static let matchBackground = NSColor.yellow
     static var selection: NSColor { .controlAccentColor }
 
     /// Select black or white text from the accent color luminance.
@@ -32,10 +34,11 @@ private enum Palette {
     }
 }
 
-private final class HUDView: NSView {
+final class HUDView: NSView {
     var items: [Window] = []
     var selected = 0
     var scope = ""
+    var search = WindowSearch()
     var maxRows = rowCap
     private var firstVisible = 0
 
@@ -71,20 +74,29 @@ private final class HUDView: NSView {
             + (scrolls ? scrollBarWidth + 8 : 0)
     }
 
-    private func title(_ window: Window) -> NSAttributedString {
+    func title(_ window: Window, selected: Bool = false) -> NSAttributedString {
         let result = NSMutableAttributedString(
             string: window.appName,
             attributes: [
                 .font: NSFont.systemFont(ofSize: 13, weight: .semibold),
-                .foregroundColor: Palette.primary,
+                .foregroundColor: selected ? Palette.onSelection : Palette.primary,
             ])
         if !window.title.isEmpty {
             result.append(NSAttributedString(
                 string: "  \(window.title)",
                 attributes: [
                     .font: NSFont.systemFont(ofSize: 13),
-                    .foregroundColor: Palette.secondary,
+                    .foregroundColor: selected ? Palette.onSelection : Palette.secondary,
                 ]))
+        }
+        let fields = [(window.appName, 0), (window.title, window.appName.utf16.count + 2)]
+        for (text, offset) in fields {
+            for range in search.ranges(in: text) {
+                result.addAttributes([
+                    .backgroundColor: Palette.matchBackground,
+                    .foregroundColor: NSColor.black,
+                ], range: NSRange(location: offset + range.location, length: range.length))
+            }
         }
         return result
     }
@@ -161,8 +173,7 @@ private final class HUDView: NSView {
                        options: [.usesLineFragmentOrigin])
         }
 
-        var text = title(window)
-        if isSelected { text = highlighted(text, alpha: 1) }
+        let text = title(window, selected: isSelected)
         let available = row.maxX - padding / 2 - badgeWidth
             - (badgeWidth > 0 ? badgeGap : 0) - iconRect.maxX - 8
         text.draw(with: NSRect(x: iconRect.maxX + 8,
@@ -242,11 +253,12 @@ final class HUDPanel {
         return (panel.frame, activeScreen())
     }
 
-    func show(_ windows: [Window], selected: Int, scope: String) {
+    func show(_ windows: [Window], selected: Int, scope: String, search: WindowSearch) {
         let screen = activeScreen()
         view.items = windows
         view.selected = selected
         view.scope = scope
+        view.search = search
         view.maxRows = maxRows(on: screen)
         view.scrollToSelection()
 

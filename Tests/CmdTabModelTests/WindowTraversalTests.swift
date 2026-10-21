@@ -54,4 +54,14 @@ final class WindowTraversalTests: XCTestCase {
         traversal.replace(with: [Item(id: 7)])
         XCTAssertEqual(traversal.selected?.id, 7)
     }
+
+    func testReturningFromEmptyResultsSelectsFirstRegardlessOfNavigation() {
+        var traversal = WindowTraversal<Item>(reversed: true)
+        traversal.replace(with: windows)
+        XCTAssertEqual(traversal.selected?.id, 4)
+        traversal.replace(with: [])
+        traversal.step(9)
+        traversal.replace(with: windows)
+        XCTAssertEqual(traversal.selected?.id, 1)
+    }
 }

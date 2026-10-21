@@ -22,10 +22,12 @@ public struct WindowTraversal<Item: Identifiable> {
         } else { offset += delta }
     }
 
-    /// Keep the selected window after a scope change. Otherwise, select the first row.
+    /// Keep the initial offset until the first scan. Later lists keep the selected
+    /// window by ID, or select the first row if there is no matching selection.
     public mutating func replace(with windows: [Item]) {
+        let pending = self.windows == nil
         let previous = selected?.id
         self.windows = windows
-        if let previous { offset = windows.firstIndex { $0.id == previous } ?? 0 }
+        if !pending { offset = previous.flatMap { id in windows.firstIndex { $0.id == id } } ?? 0 }
     }
 }

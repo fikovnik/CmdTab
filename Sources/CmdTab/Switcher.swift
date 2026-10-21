@@ -11,16 +11,31 @@ private let previewDelay: TimeInterval = 0.2
 @MainActor
 final class Switcher {
     /// The state of one traversal. Clear the session to end the traversal.
-    private struct Session {
+    struct Session {
         let mode: SwitchMode
         /// The process filter for current app mode.
         let appFilter: pid_t?
         var traversal: WindowTraversal<Window>
+        var candidates: [Window] = []
+        var search = WindowSearch()
         var scope = WindowScope.allSpaces
         /// Show the list after the reveal timer and window scan complete.
         var wantsHUD = false
+        /// Keep the HUD and keyboard capture available when filtering removes every row.
+        var hasShownHUD = false
 
         var scopeLabel: String { scope == .allSpaces ? "All Spaces" : "This Space" }
+
+        mutating func replaceCandidates(with windows: [Window]) {
+            candidates = windows
+            applyFilter()
+        }
+
+        mutating func applyFilter() {
+            // Suppress an initial list with one window. An open HUD can have any count.
+            let eligible = hasShownHUD || candidates.count > 1 ? candidates : []
+            traversal.replace(with: eligible.filter { search.matches(appName: $0.appName, title: $0.title) })
+        }
     }
 
     private let hud = HUDPanel()
@@ -28,6 +43,8 @@ final class Switcher {
     private var session: Session?
     private var revealTimer: Timer?
     private var previewTimer: Timer?
+
+    var acceptsFilterInput: Bool { session?.hasShownHUD == true }
 
     var diagnosticSummary: String {
         let cycle = session.map {
@@ -85,6 +102,24 @@ final class Switcher {
         }
     }
 
+    func appendFilterText(_ text: String) {
+        updateSearch { $0.append(text) }
+    }
+
+    func deleteFilterCharacter() {
+        updateSearch { $0.deleteLastCharacter() }
+    }
+
+    private func updateSearch(_ change: (inout WindowSearch) -> Void) {
+        guard var session, session.hasShownHUD else { return }
+        let previous = session.search.query
+        change(&session.search)
+        guard previous != session.search.query else { return }
+        session.applyFilter()
+        self.session = session
+        showHUD()
+    }
+
     /// Change the Space filter and keep the selected window when possible.
     func toggleScope() {
         guard var session else { return }
@@ -114,7 +149,7 @@ final class Switcher {
         var session = committed
 
         // A quick switch can end before the scan. Complete the scan here.
-        if session.traversal.windows == nil { session.traversal.replace(with: Switcher.scan(session)) }
+        if session.traversal.windows == nil { session.replaceCandidates(with: Switcher.scan(session)) }
 
         guard let windows = session.traversal.windows, !windows.isEmpty else {
             Diagnostics.note("commit: nothing to switch to")
@@ -134,11 +169,18 @@ final class Switcher {
     }
 
     private func showHUD() {
-        guard let session, session.wantsHUD,
-              let windows = session.traversal.windows, !windows.isEmpty
+        guard var session, session.wantsHUD,
+              let windows = session.traversal.windows
         else { return }
+        guard !windows.isEmpty || session.hasShownHUD else {
+            preview.hide()
+            hud.hide()
+            return
+        }
         Diagnostics.note("reveal \(windows.count) windows")
-        hud.show(windows, selected: session.traversal.index, scope: session.scopeLabel)
+        hud.show(windows, selected: session.traversal.index, scope: session.scopeLabel, search: session.search)
+        session.hasShownHUD = true
+        self.session = session
         armPreview()
     }
 
@@ -147,15 +189,16 @@ final class Switcher {
         previewTimer?.invalidate()
         previewTimer = nil
 
+        guard let session, session.wantsHUD, session.traversal.selected != nil else {
+            preview.hide()
+            return
+        }
+
         if preview.isShowing {
             // A visible preview can need a capture. Keep it outside the event tap.
             DispatchQueue.main.async { [weak self] in self?.showPreview() }
             return
         }
-
-        guard let session, session.wantsHUD,
-              let windows = session.traversal.windows, !windows.isEmpty
-        else { return }
 
         // `.common`, for the same reason as the reveal timer.
         let timer = Timer(timeInterval: previewDelay, repeats: false) { [weak self] _ in
@@ -189,19 +232,14 @@ final class Switcher {
         guard var session else { return }
 
         let found = Switcher.scan(session)
-        session.traversal.replace(with: found)
+        session.replaceCandidates(with: found)
         Diagnostics.note("loaded \(found.count) (scope=\(session.scope))")
         self.session = session
 
-        if found.isEmpty {
-            preview.hide()
-            hud.hide()
-        } else {
-            showHUD()
-        }
+        showHUD()
     }
 
-    /// Read the list outside the event tap. A list with one window needs no switch.
+    /// Read the candidates outside the event tap. Text edits reuse this list.
     private static func scan(_ session: Session) -> [Window] {
         let tracker = WindowTracker.shared
         // The window that the user leaves goes first. Then the next window in
@@ -215,6 +253,6 @@ final class Switcher {
             guard let pid = session.appFilter else { return [] }
             found = found.filter { $0.pid == pid }
         }
-        return found.count > 1 ? found : []
+        return found
     }
 }
