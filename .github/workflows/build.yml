@@ -19,7 +19,7 @@ jobs:
       - name: Toolchain
         run: swift --version && xcodebuild -version
 
-      # Hosted runners use ad hoc signing.
+      # Use an ad hoc signature because the runner has no certificate.
       - name: Tests
         run: make test
 

@@ -22,12 +22,12 @@ final class ConfigTests: XCTestCase {
         let config = parse(#"""
         {
           "keys": {
+            "alt-tab": "switch-all-windows",
             "ctrl-alt-cmd-1": "switch-desktop:1",
             "shift-ctrl-alt-cmd-left": "tile:left",
             "ctrl-alt-cmd-e": "shell:open -a Finder ~",
             "ctrl-alt-cmd-s": "applescript:tell app \"Finder\" to activate"
           },
-          "switch-all-windows": { "trigger": "alt-tab" },
           "menu": { "icon": "⇥" }
         }
         """#)
@@ -42,12 +42,20 @@ final class ConfigTests: XCTestCase {
         XCTAssertEqual(try action(config, "cmd-grave"), .switcher(.currentApp))
     }
 
+    func testExplicitDefaultSwitchersParseWithoutConflicts() {
+        let config = parse(#"""
+        { "keys": { "cmd-tab": "switch-all-windows", "cmd-grave": "switch-app-windows" } }
+        """#)
+        XCTAssertEqual(config.errors, [])
+        XCTAssertEqual(config.bindings, Config.defaults.bindings)
+    }
+
     func testUnknownFieldsAndSectionsProduceErrors() throws {
         let config = parse(#"""
-        { "kesy": {}, "menu": { "icons": "x" }, "switch-all-windows": { "triger": "alt-tab" } }
+        { "kesy": {}, "menu": { "icons": "x" } }
         """#)
-        XCTAssertEqual(config.errors.count, 3)
-        for text in ["kesy", "icons", "triger"] {
+        XCTAssertEqual(config.errors.count, 2)
+        for text in ["kesy", "icons"] {
             XCTAssertTrue(config.errors.contains { $0.contains(text) }, "\(config.errors)")
         }
         XCTAssertEqual(try action(config, "cmd-tab"), .switcher(.allWindows))
@@ -77,7 +85,7 @@ final class ConfigTests: XCTestCase {
 
     func testInvalidTriggersRestoreDefaults() throws {
         for trigger in ["f13", "shift-tab", "shift-cmd-tab", "fn-ctrl-tab", "unknown-tab", "cmd-grave"] {
-            let config = parse("{\"switch-all-windows\":{\"trigger\":\"\(trigger)\"}}")
+            let config = parse("{\"keys\":{\"\(trigger)\":\"switch-all-windows\"}}")
             XCTAssertEqual(config.errors.count, 1, trigger)
             XCTAssertEqual(try action(config, "cmd-tab"), .switcher(.allWindows), trigger)
             XCTAssertEqual(try action(config, "cmd-grave"), .switcher(.currentApp), trigger)
@@ -86,18 +94,18 @@ final class ConfigTests: XCTestCase {
 
     func testTriggerKeysCanBeSwappedWhenTheyRemainDistinct() throws {
         let config = parse(#"""
-        { "switch-all-windows": { "trigger": "alt-grave" },
-          "switch-current-app": { "trigger": "ctrl-tab" } }
+        { "keys": { "alt-grave": "switch-all-windows", "ctrl-tab": "switch-app-windows" } }
         """#)
         XCTAssertEqual(config.errors, [])
         XCTAssertEqual(try action(config, "alt-grave"), .switcher(.allWindows))
         XCTAssertEqual(try action(config, "ctrl-tab"), .switcher(.currentApp))
+        XCTAssertNil(try action(config, "cmd-tab"))
+        XCTAssertNil(try action(config, "cmd-grave"))
     }
 
     func testTwoModifiersOnTheSameTriggerKeyStillConflict() throws {
         let config = parse(#"""
-        { "switch-all-windows": { "trigger": "alt-tab" },
-          "switch-current-app": { "trigger": "ctrl-tab" } }
+        { "keys": { "alt-tab": "switch-all-windows", "ctrl-tab": "switch-app-windows" } }
         """#)
         XCTAssertEqual(config.errors.count, 1)
         XCTAssertEqual(config.bindings, Config.defaults.bindings)
@@ -105,7 +113,7 @@ final class ConfigTests: XCTestCase {
 
     func testFunctionBindingsAreRejected() throws {
         let config = parse(#"""
-        { "keys": { "fn-ctrl-e": "shell:ls" }, "switch-current-app": { "trigger": "fn-ctrl-grave" } }
+        { "keys": { "fn-ctrl-e": "shell:ls", "fn-ctrl-grave": "switch-app-windows" } }
         """#)
         XCTAssertEqual(config.errors.count, 2)
         XCTAssertTrue(config.errors.allSatisfy { $0.contains("fn cannot be bound") })
@@ -121,9 +129,63 @@ final class ConfigTests: XCTestCase {
         XCTAssertEqual(try action(config, "ctrl-alt-cmd-h"), .toggleMaximize)
     }
 
+    func testDuplicateSwitcherTriggersUseTheFirstEntryInAlphabeticalOrder() throws {
+        for duplicate in ["alt-a", "option-tab"] {
+            let config = parse("{\"keys\":{\"opt-tab\":\"switch-all-windows\",\"\(duplicate)\":\"switch-all-windows\"}}")
+            XCTAssertEqual(config.errors.count, 1)
+            XCTAssertTrue(config.errors[0].contains("already has a trigger"))
+            let first = min("opt-tab", duplicate)
+            XCTAssertEqual(try action(config, first), .switcher(.allWindows))
+            if duplicate == "alt-a" { XCTAssertNil(try action(config, "opt-tab")) }
+            XCTAssertEqual(config.bindings.count, 2)
+        }
+    }
+
+    func testInvalidSwitcherEntryDoesNotBlockAValidCustomTrigger() throws {
+        let config = parse(#"""
+        { "keys": { "a": "switch-all-windows", "ctrl-tab": "switch-all-windows",
+                    "b": "switch-app-windows", "alt-grave": "switch-app-windows" } }
+        """#)
+        XCTAssertEqual(config.errors.count, 2)
+        XCTAssertEqual(try action(config, "ctrl-tab"), .switcher(.allWindows))
+        XCTAssertEqual(try action(config, "alt-grave"), .switcher(.currentApp))
+        XCTAssertNil(try action(config, "cmd-tab"))
+        XCTAssertNil(try action(config, "cmd-grave"))
+    }
+
+    func testExplicitSwitchersTakePrecedenceOverLocalChordAliases() throws {
+        let config = parse(#"""
+        { "keys": { "alt-tab": "toggle-maximize", "option-tab": "switch-all-windows",
+                    "shift-alt-tab": "tile:left" } }
+        """#)
+        XCTAssertEqual(config.errors.count, 2)
+        XCTAssertTrue(config.errors.allSatisfy { $0.contains("already bound") })
+        XCTAssertEqual(try action(config, "alt-tab"), .switcher(.allWindows))
+        XCTAssertNil(try action(config, "shift-alt-tab"))
+    }
+
+    func testCustomTriggerMakesTheOldChordAvailableForLocalActions() throws {
+        let config = parse(#"""
+        { "keys": { "alt-tab": "switch-all-windows", "cmd-tab": "toggle-maximize" } }
+        """#)
+        XCTAssertEqual(config.errors, [])
+        XCTAssertEqual(try action(config, "alt-tab"), .switcher(.allWindows))
+        XCTAssertEqual(try action(config, "cmd-tab"), .toggleMaximize)
+    }
+
+    func testLegacySwitcherSectionsAndActionNameProduceErrors() {
+        let config = parse(#"""
+        { "switch-all-windows": { "trigger": "alt-tab" },
+          "switch-current-app": { "trigger": "alt-grave" },
+          "keys": { "alt-grave": "switch-current-app" } }
+        """#)
+        XCTAssertEqual(config.errors.count, 3)
+        XCTAssertEqual(config.bindings, Config.defaults.bindings)
+    }
+
     func testMalformedJSONAndInvalidSectionTypesPreserveSwitchers() throws {
-        for json in ["not json", "[]", #"{"keys":"nope"}"#,
-                     #"{"switch-all-windows":{"trigger":42}}"#, #"{"menu":{"icon":false}}"#] {
+        for json in ["not json", "[]", #"{"keys":"nope"}"#, #"{"keys":{"cmd-tab":42}}"#,
+                     #"{"menu":"nope"}"#, #"{"menu":{"icon":false}}"#] {
             let config = parse(json)
             XCTAssertFalse(config.errors.isEmpty, json)
             XCTAssertEqual(try action(config, "cmd-tab"), .switcher(.allWindows), json)
@@ -142,6 +204,7 @@ final class ConfigTests: XCTestCase {
 
     func testParsedActionValuesPreserveParameters() throws {
         let cases: [(String, Action)] = [
+            ("switch-all-windows", .switcher(.allWindows)), ("switch-app-windows", .switcher(.currentApp)),
             ("tile:bottom", .tile(.bottom)), ("tile:center", .center),
             ("toggle-fullscreen", .toggleFullScreen), ("toggle-maximize", .toggleMaximize),
             ("switch-desktop:7", .desktop(.number(7))), ("switch-desktop:16", .desktop(.number(16))),

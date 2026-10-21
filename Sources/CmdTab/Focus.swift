@@ -6,7 +6,6 @@ import CmdTabModel
 /// Use private focus calls because macOS can refuse activation from an accessory app.
 @MainActor
 enum Focus {
-    /// The Space and the front app before the focus.
     private struct Origin {
         let space: SpaceID
         let pid: pid_t
@@ -19,10 +18,10 @@ enum Focus {
         let timer: Timer
     }
 
-    /// Continue after one second if the Space notification does not arrive.
+    /// If the Space notification does not arrive, continue after one second.
     private static let spaceChangeTimeout: TimeInterval = 1
 
-    /// A focus that waits for a Space change. A new focus replaces it.
+    /// A new focus request replaces the request that waits for a Space change.
     private static var pending: Pending?
 
     static var diagnosticSummary: String {
@@ -52,7 +51,7 @@ enum Focus {
         pending = Pending(window: window, space: space, origin: origin, timer: timer)
     }
 
-    /// Continue the pending focus when the target Space becomes visible.
+    /// Continue only after the target Space becomes visible.
     static func spaceDidChange() {
         guard let pending, Spaces.layout().visibleSpaces.contains(pending.space) else { return }
         finishPending()
@@ -84,13 +83,13 @@ enum Focus {
         let fronted = WindowServer.front(window: window.id, pid: window.pid)
         if !fronted { Diagnostics.error("could not front window id=\(window.id) pid=\(window.pid)") }
 
-        // Read a new AX element if the cached element is invalid.
+        // If the cached AX element is invalid, retry once with a new element.
         var raise = element?.perform(kAXRaiseAction)
         if raise == .invalidUIElement, let fresh = AXUIElement.window(window.id, pid: window.pid) {
             raise = fresh.perform(kAXRaiseAction)
         }
 
-        // Do not restore the previous app on a Space that remains visible.
+        // If the previous Space remains visible, keep its current front app.
         if let origin, origin.pid != window.pid, !window.spaces.isEmpty,
            !window.spaces.contains(origin.space),
            !Spaces.layout().visibleSpaces.contains(origin.space) {
@@ -99,7 +98,7 @@ enum Focus {
 
         Diagnostics.note("focus id=\(window.id) fronted=\(fronted) raise=\(raise.map { "\($0.rawValue)" } ?? "no element") \(window.appName) | \(window.title)")
 
-        // The focus order changes only when the app reports the focus.
+        // Update focus order from observed focus after the request completes.
         let (id, pid) = (window.id, window.pid)
         DispatchQueue.main.async {
             MainActor.assumeIsolated { WindowTracker.shared.readFocus(of: pid) }

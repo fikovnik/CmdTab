@@ -1,4 +1,4 @@
-/// The selection in one window list. A nil list means that the scan is pending.
+/// A nil window list means that the scan is incomplete.
 public struct WindowTraversal<Item: Identifiable> {
     public private(set) var windows: [Item]?
     private var offset: Int
@@ -15,15 +15,15 @@ public struct WindowTraversal<Item: Identifiable> {
         return windows[index]
     }
 
-    /// Accumulate steps before the scan. Page steps stop at the list boundaries.
+    /// Before the scan, collect steps in the offset. After the scan, page steps stop at the list limits.
     public mutating func step(_ delta: Int, wrap: Bool = true) {
         if !wrap, let windows, !windows.isEmpty {
             offset = max(0, min(index + delta, windows.count - 1))
         } else { offset += delta }
     }
 
-    /// Keep the initial offset until the first scan. Later lists keep the selected
-    /// window by ID, or select the first row if there is no matching selection.
+    /// Keep the offset until the first scan completes.
+    /// For subsequent lists, keep the selected window by ID or select the first row.
     public mutating func replace(with windows: [Item]) {
         let pending = self.windows == nil
         let previous = selected?.id

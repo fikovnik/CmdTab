@@ -2,9 +2,8 @@ import XCTest
 
 @testable import CmdTabModel
 
-/// `CGSCopyManagedDisplaySpaces` as recorded on the development machine:
-/// display 1 has seven desktops and shows Space 7 (desktop 6), display 2 has
-/// one desktop. `withFullScreen` adds the full-screen Space 99 after desktop 3.
+/// Use recorded `CGSCopyManagedDisplaySpaces` data.
+/// `withFullScreen` adds Space 99 after desktop 3.
 private enum Fixture {
     static let display1 = "361EA19E-2B84-4B64-9FCA-5FE5CCC6B00C"
     static let display2 = "DEF21301-D53F-477B-92F2-9C695BAF0396"
@@ -100,7 +99,7 @@ final class SpaceLayoutSwipeTests: XCTestCase {
     func testSwipesToADesktopCountTheFullScreenSpaceBetween() {
         // Space 7 is at index 6 and desktop 1 is at index 0.
         XCTAssertEqual(display1.swipes(toDesktop: 1), -6)
-        // Desktop 4 is Space 5, at index 4, after the full-screen Space.
+        // Desktop 4 is Space 5, at index 4, after the full screen Space.
         XCTAssertEqual(display1.swipes(toDesktop: 4), -2)
         XCTAssertEqual(display1.swipes(toDesktop: 7), 1)
     }

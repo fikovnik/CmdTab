@@ -1,11 +1,11 @@
 import AppKit
 import CmdTabModel
 
-/// Private WindowServer calls for windows, Spaces, focus, and images. Keep private declarations in this file.
+/// Keep private WindowServer declarations in this file.
 @MainActor
 enum WindowServer {
-    /// Read window IDs and process IDs on any Space, in stack order.
-    /// AX-confirmed minimized windows can have the same attributes as compositing surfaces.
+    /// Read window IDs and process IDs in stack order.
+    /// Minimized windows can lack normal window attributes. Accept windows that AX confirms as minimized.
     static func windows(onSpace space: SpaceID,
                         includingMinimized minimized: Set<CGWindowID> = []) -> [(id: CGWindowID, pid: pid_t)] {
         let ids = windowIDs(onSpace: space)
@@ -24,7 +24,7 @@ enum WindowServer {
         return result
     }
 
-    /// All window IDs on `space`. Option 0x7 includes minimized windows.
+    /// Option `0x7` includes minimized windows.
     private static func windowIDs(onSpace space: SpaceID) -> [NSNumber] {
         var setTags: UInt64 = 0
         var clearTags: UInt64 = 0
@@ -34,12 +34,8 @@ enum WindowServer {
         return raw as? [NSNumber] ?? []
     }
 
-    /// The query also gives compositing surfaces, attached panels and hidden
-    /// windows. A real window has all of these properties:
-    /// - attribute bit 0x2 (a Chrome compositing surface has attributes 0),
-    /// - no parent window (an attached panel has a parent),
-    /// - level 0, the normal window level (the menu bar is level 24),
-    /// - an alpha value above 0.
+    /// Require attribute bit `0x2` for normal windows.
+    /// Reject attached panels, other window levels, and transparent surfaces.
     private static func isReal(_ iterator: CFTypeRef) -> Bool {
         SLSWindowIteratorGetAttributes(iterator) & 0x2 != 0
             && SLSWindowIteratorGetParentID(iterator) == 0
@@ -47,9 +43,7 @@ enum WindowServer {
             && SLSWindowIteratorGetAlpha(iterator) > 0
     }
 
-    /// The titles of all windows on all Spaces, from `CGWindowList`.
-    /// Empty without Screen Recording permission, because macOS removes
-    /// `kCGWindowName` then.
+    /// Read titles across all Spaces. Return no titles without the Screen Recording permission.
     static func titles() -> [CGWindowID: String] {
         guard CGPreflightScreenCaptureAccess(),
               let list = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements],
@@ -66,13 +60,12 @@ enum WindowServer {
         return result
     }
 
-    /// Read overlay Space membership for diagnostics. An AppKit panel can be visible on an incorrect Space.
     static func spaces(ofWindow id: CGWindowID) -> [SpaceID] {
         let raw = CGSCopySpacesForWindows(connection, 7, [NSNumber(value: id)] as CFArray)?.takeRetainedValue()
         return (raw as? [NSNumber] ?? []).map(\.uint64Value)
     }
 
-    /// The size of a window in points.
+    /// Return the window size in points.
     static func size(ofWindow id: CGWindowID) -> CGSize? {
         guard let list = CGWindowListCopyWindowInfo([.optionIncludingWindow], id)
                 as? [[String: Any]],
@@ -103,8 +96,7 @@ enum WindowServer {
         return makeKeyWindow(&psn, id) == .success
     }
 
-    /// Sets the front app that macOS keeps for `space`. This does not change
-    /// the global front process.
+    /// Update the front app for `space` without a change to the global front process.
     static func setFrontApp(_ pid: pid_t, of space: SpaceID) {
         var psn = ProcessSerialNumber()
         guard GetProcessForPID(pid, &psn) == noErr else { return }
@@ -157,7 +149,6 @@ private func CGSCopySpacesForWindows(_ cid: CGSConnectionID, _ mask: Int, _ wind
 @_silgen_name("CGSCopyActiveMenuBarDisplayIdentifier")
 func CGSCopyActiveMenuBarDisplayIdentifier(_ cid: CGSConnectionID) -> Unmanaged<CFString>?
 
-/// Resolve the WindowServer ID of an AX element.
 @_silgen_name("_AXUIElementGetWindow")
 func _AXUIElementGetWindow(_ element: AXUIElement,
                            _ windowID: UnsafeMutablePointer<CGWindowID>) -> AXError

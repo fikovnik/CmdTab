@@ -1,6 +1,6 @@
 import Carbon.HIToolbox
 
-/// Routes keyboard events without an event tap or a WindowServer connection.
+/// Model keyboard events without an event tap or a WindowServer connection.
 public struct HotkeyState {
     public enum Event { case keyDown, keyUp, flagsChanged }
     public enum Command: Equatable {
@@ -38,7 +38,7 @@ public struct HotkeyState {
         if let hold, !modifiers.isSuperset(of: hold) {
             self.hold = nil
             mode = nil
-            // Recover if the system discarded the modifier release while the tap was disabled.
+            // If the system discards a modifier release, use the next event to finish the traversal.
             return .finish(commit: true, consume: consumedRelease)
         }
         if event == .flagsChanged { return .pass }

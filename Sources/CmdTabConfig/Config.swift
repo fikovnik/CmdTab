@@ -1,13 +1,12 @@
 import Foundation
 import CmdTabModel
 
-/// The text in the menu bar.
 public enum MenuIcon: Sendable, Equatable {
     case desktopNumber
     case literal(String)
 }
 
-/// The configuration snapshot. Invalid entries produce errors. Other entries remain available.
+/// Keep valid entries when other entries have errors.
 public struct Config: Sendable {
     public let bindings: [Chord: Action]
     public let menuIcon: MenuIcon
@@ -18,7 +17,7 @@ public struct Config: Sendable {
 
     private static let switchers: [(name: String, mode: SwitchMode, trigger: String)] = [
         ("switch-all-windows", .allWindows, "cmd-tab"),
-        ("switch-current-app", .currentApp, "cmd-grave"),
+        ("switch-app-windows", .currentApp, "cmd-grave"),
     ]
 
     public static var defaults: Config { parse(Data("{}".utf8)) }
@@ -37,7 +36,7 @@ public struct Config: Sendable {
         }
         var errors: [String] = []
         var bindings: [Chord: Action] = [:]
-        let known = ["keys", "menu"] + switchers.map(\.name)
+        let known = ["keys", "menu"]
         for key in root.keys.sorted() where !known.contains(key) {
             errors.append("unknown section \"\(key)\"")
         }
@@ -64,28 +63,33 @@ public struct Config: Sendable {
             return chord
         }
 
-        // Validate both triggers before local bindings. Shift belongs to reverse traversal.
+        // Reserve switcher shortcuts before you add local bindings.
         let defaultChords = switchers.map { try! Chord(parsing: $0.trigger) }
-        var triggers = defaultChords
-        for (index, switcher) in switchers.enumerated() {
-            let object = section(switcher.name, fields: ["trigger"])
-            let fallback = defaultChords[index]
-            var trigger = fallback
-            if let value = object["trigger"] {
-                do {
-                    guard let text = value as? String else { throw ConfigError("must be a string") }
-                    let candidate = try chord(text)
-                    guard !candidate.modifiers.subtracting(.shift).isEmpty else {
+        var customTriggers: [Chord?] = switchers.map { _ in nil }
+        var localBindings: [(text: String, key: Chord, action: Action)] = []
+        let keys = section("keys")
+        for text in keys.keys.sorted() {
+            do {
+                guard let spec = keys[text] as? String else { throw ConfigError("value must be a string") }
+                let key = try chord(text)
+                let action = try action(for: spec)
+                if let index = switchers.firstIndex(where: { action == .switcher($0.mode) }) {
+                    guard !key.modifiers.subtracting(.shift).isEmpty else {
                         throw ConfigError("needs at least one of cmd/ctrl/alt")
                     }
-                    guard !candidate.modifiers.contains(.shift) else {
+                    guard !key.modifiers.contains(.shift) else {
                         throw ConfigError("Shift reverses traversal and cannot be part of a trigger")
                     }
-                    trigger = candidate
-                } catch { errors.append("\(switcher.name).trigger: \(error)") }
-            }
-            triggers[index] = trigger
+                    guard customTriggers[index] == nil else {
+                        throw ConfigError("\(spec) already has a trigger")
+                    }
+                    customTriggers[index] = key
+                } else {
+                    localBindings.append((text, key, action))
+                }
+            } catch { errors.append("keys.\(text): \(error)") }
         }
+        var triggers = zip(customTriggers, defaultChords).map { $0 ?? $1 }
         if triggers[0].keyCode == triggers[1].keyCode {
             errors.append("switcher trigger keys must differ; restored both default triggers")
             triggers = defaultChords
@@ -94,12 +98,8 @@ public struct Config: Sendable {
             bindings[trigger] = .switcher(switcher.mode)
         }
 
-        let keys = section("keys")
-        for text in keys.keys.sorted() {
+        for (text, key, action) in localBindings {
             do {
-                guard let spec = keys[text] as? String else { throw ConfigError("value must be a string") }
-                let key = try chord(text)
-                let action = try action(for: spec)
                 let reversedTrigger = key.modifiers.contains(.shift)
                     && bindings[key.removing(.shift)].map { if case .switcher = $0 { true } else { false } } == true
                 guard bindings[key] == nil, !reversedTrigger else {
@@ -120,6 +120,9 @@ public struct Config: Sendable {
     }
 
     static func action(for spec: String) throws -> Action {
+        if let switcher = switchers.first(where: { $0.name == spec }) {
+            return .switcher(switcher.mode)
+        }
         switch spec {
         case "toggle-fullscreen": return .toggleFullScreen
         case "toggle-maximize": return .toggleMaximize

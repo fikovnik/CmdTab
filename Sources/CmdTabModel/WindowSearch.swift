@@ -1,6 +1,6 @@
 import Foundation
 
-/// The text filter for one traversal. Match each label independently.
+/// Match the app name and window title separately.
 public struct WindowSearch: Sendable {
     public private(set) var query: String
 
@@ -16,7 +16,7 @@ public struct WindowSearch: Sendable {
         query.isEmpty || !ranges(in: appName).isEmpty || !ranges(in: title).isEmpty
     }
 
-    /// UTF-16 ranges for attributed text. Include overlapping occurrences.
+    /// Return UTF-16 ranges for attributed text. Include matches that overlap.
     public func ranges(in text: String) -> [NSRange] {
         guard !query.isEmpty else { return [] }
         var result: [NSRange] = []

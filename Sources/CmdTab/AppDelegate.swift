@@ -48,7 +48,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if requestAccessibility() {
             startTap()
         } else {
-            // Poll until System Settings gives the Accessibility permission.
+            // Wait for the user to permit Accessibility access.
             permissionTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] timer in
                 guard AXIsProcessTrusted() else { return }
                 timer.invalidate()
@@ -60,7 +60,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Stop the tap before its callback pointer becomes invalid.
     func applicationWillTerminate(_ notification: Notification) {
         tap.stop()
         Diagnostics.flush()
@@ -88,7 +87,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let icon: String
         switch menuIcon {
         case .desktopNumber:
-            // A full-screen Space has no desktop number. It shows the tab glyph.
+            // Full screen Spaces have no desktop number. Use the tab glyph for these Spaces.
             let layout = Spaces.layout()
             let space = layout.display(identifier: Spaces.activeDisplayIdentifier())?.currentSpace
             icon = space.flatMap(layout.desktopNumber(of:)).map(String.init) ?? "⇥"
@@ -171,7 +170,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         WindowPreview.requestPermission()
     }
 
-    /// Create the example file if necessary. Report file errors before attempting to open it.
+    /// If the file does not exist, create the example configuration.
     @objc private func openConfiguration() {
         let url = Config.defaultURL
         do {
@@ -203,10 +202,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.runModal()
     }
 
-    /// An example configuration. Local actions are absent from the built-in defaults.
+    /// The example includes local actions. The built-in defaults include only the two switchers.
     private static let starterConfig = """
     {
       "keys": {
+        "cmd-tab": "switch-all-windows",
+        "cmd-grave": "switch-app-windows",
+
         "shift-ctrl-alt-cmd-left":  "tile:left",
         "shift-ctrl-alt-cmd-right": "tile:right",
         "shift-ctrl-alt-cmd-up":    "tile:top",
@@ -217,8 +219,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         "shift-ctrl-alt-cmd-e": "shell:open -a Finder ~"
       },
-      "switch-all-windows": { "trigger": "cmd-tab" },
-      "switch-current-app": { "trigger": "cmd-grave" },
       "menu": { "icon": "desktop-number" }
     }
 

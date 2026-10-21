@@ -1,12 +1,11 @@
 import CmdTabModel
 
-/// The window list for one traversal.
 public enum SwitchMode: Sendable, Equatable {
     case allWindows
     case currentApp
 }
 
-/// A parsed action. The app executes these values after the event tap returns.
+/// Switcher actions start a traversal. Other actions run after the event tap returns.
 public enum Action: Sendable, Equatable {
     public enum Desktop: Sendable, Equatable {
         case number(Int)

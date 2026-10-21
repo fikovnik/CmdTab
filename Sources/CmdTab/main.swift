@@ -1,7 +1,7 @@
 import AppKit
 
 let arguments = CommandLine.arguments
-// This report belongs to a new process, not to the running menu bar app.
+// Read window state in this process. The report cannot inspect the menu bar process.
 if arguments.contains("--report") {
     _ = NSApplication.shared
     AXUIElement.configureTimeout()

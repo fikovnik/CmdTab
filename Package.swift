@@ -5,14 +5,14 @@ let package = Package(
     name: "CmdTab",
     platforms: [.macOS(.v13)],
     targets: [
-        // Configuration values and keyboard state. No WindowServer connection.
+        // Keep configuration and keyboard state independent of the WindowServer.
         .target(
             name: "CmdTabConfig",
             dependencies: ["CmdTabModel"],
             path: "Sources/CmdTabConfig",
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
-        // Window order, traversal, and geometry. No WindowServer connection.
+        // Keep window order and geometry independent of the WindowServer.
         .target(
             name: "CmdTabModel",
             path: "Sources/CmdTabModel",

@@ -1,23 +1,22 @@
 import AppKit
 import CmdTabModel
 
-/// Reads the Space layout and the display geometry from the WindowServer.
+/// Read Space data from the WindowServer and display geometry from Core Graphics.
 @MainActor
 enum Spaces {
-    /// The Spaces of all displays. One WindowServer call.
     static func layout() -> SpaceLayout {
         let raw = CGSCopyManagedDisplaySpaces(CGSMainConnectionID())?.takeRetainedValue()
         return SpaceLayout(managedDisplaySpaces: raw as? [[String: Any]] ?? [])
     }
 
-    /// The display UUID for the active menu bar.
+    /// Return the UUID of the display with the active menu bar.
     static func activeDisplayIdentifier() -> String? {
         CGSCopyActiveMenuBarDisplayIdentifier(CGSMainConnectionID())?.takeRetainedValue() as String?
     }
 
-    /// The frame of a display in global coordinates, origin at the top left.
+    /// Return a frame in global coordinates with the origin at the top left.
     static func frame(of display: SpaceLayout.Display) -> CGRect? {
-        // With shared Spaces, all displays switch together. Any display is correct.
+        // For shared Spaces, use the primary display because all displays switch together.
         if display.identifier == "Main" { return CGDisplayBounds(CGMainDisplayID()) }
 
         var ids = [CGDirectDisplayID](repeating: 0, count: 16)

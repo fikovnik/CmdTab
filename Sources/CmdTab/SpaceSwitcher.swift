@@ -6,7 +6,8 @@ import CmdTabModel
 /// The gesture fields come from InstantSpaceSwitcher.
 @MainActor
 enum SpaceSwitcher {
-    /// Show the desktop number on the display with the active menu bar. Desktop numbers start at one.
+    /// Use the display with the active menu bar.
+    /// Desktop numbers start at one and exclude full screen Spaces.
     static func activate(desktop number: Int) {
         guard let display = activeDisplay() else { return }
         guard let swipes = display.swipes(toDesktop: number) else {
@@ -22,7 +23,7 @@ enum SpaceSwitcher {
         swipe(swipes, on: display)
     }
 
-    /// Show the target Space. Return true only when swipe events were posted.
+    /// Show the target Space. Return true only if the code posts every swipe event.
     static func show(_ space: SpaceID, in layout: SpaceLayout) -> Bool {
         guard let display = layout.display(containing: space),
               let swipes = display.swipes(to: space), swipes != 0
@@ -36,12 +37,11 @@ enum SpaceSwitcher {
         return display
     }
 
-    /// Posts one swipe for each Space to move. A negative count moves left.
+    /// A negative count moves left. Each move uses one complete swipe sequence.
     @discardableResult
     private static func swipe(_ count: Int, on display: SpaceLayout.Display) -> Bool {
         guard count != 0, let frame = Spaces.frame(of: display) else { return false }
-        // The Dock applies a swipe to the display that contains the event
-        // location. The location does not move the pointer.
+        // The Dock uses the event location to select a display. This location does not move the pointer.
         let location = CGPoint(x: frame.midX, y: frame.midY)
         let sign: Double = count > 0 ? 1 : -1
         let velocity = sign * DockSwipe.velocity * Double(abs(count))
@@ -49,8 +49,7 @@ enum SpaceSwitcher {
             for phase in DockSwipe.phases {
                 guard let event = CGEvent(source: nil) else { return false }
                 event.location = location
-                // The user holds the modifiers of the chord. Do not send them
-                // with the gesture.
+                // Keep the held shortcut modifiers out of the gesture.
                 event.flags = []
                 event.setIntegerValueField(DockSwipe.eventType, value: DockSwipe.dockControl)
                 event.setIntegerValueField(DockSwipe.hidType, value: DockSwipe.dockSwipe)
@@ -81,9 +80,9 @@ private enum DockSwipe {
     /// IOHID event type `kIOHIDEventTypeDockSwipe`.
     static let dockSwipe: Int64 = 23
     static let horizontal: Int64 = 1
-    /// Began, changed, ended. The Dock ignores a swipe that has fewer phases.
+    /// Use all three gesture phases in order: begin, change, and end.
     static let phases: [Int64] = [1, 2, 4]
-    /// Use minimal progress to avoid a visible animation.
+    /// Keep gesture progress small to avoid a visible animation.
     static let minimumProgress = Double(Float.leastNonzeroMagnitude)
     static let velocity: Double = 2000
 }

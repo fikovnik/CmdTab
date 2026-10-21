@@ -69,7 +69,7 @@ final class WindowPreviewTests: XCTestCase {
         let image = try image(width: 100, height: 8000)
         let preview = WindowPreview(snapshot: { _ in image })
         preview.capture(1)
-        // A 100x8000 image becomes 17x1400 pixels.
+        // The size limit reduces the frame to 17 × 1400 pixels.
         XCTAssertGreaterThan(preview.cachedBytes, 0)
         XCTAssertLessThan(preview.cachedBytes, 32 * 1400 * 4)
     }

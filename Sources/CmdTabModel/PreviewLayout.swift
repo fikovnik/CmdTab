@@ -1,6 +1,6 @@
 import CoreGraphics
 
-/// Places a preview in AppKit coordinates. The image size excludes the panel border.
+/// Use AppKit coordinates. The image size excludes the panel border.
 public enum PreviewLayout {
     public static let maximumSize = CGSize(width: 900, height: 700)
     public static let inset: CGFloat = 6

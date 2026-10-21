@@ -1,6 +1,6 @@
 import AppKit
 
-/// Reuse the panel while display geometry stays constant. Recreate it after display changes to restore Space membership.
+/// If the display configuration changes, recreate the panel to restore its Space membership.
 @MainActor
 final class OverlayPanel {
     struct Display: Equatable {
@@ -37,7 +37,7 @@ final class OverlayPanel {
         return panel
     }
 
-    /// Reset on each display notification, even if display IDs return to their previous values.
+    /// Discard the panel even if the display IDs match their previous values.
     func reset() {
         if let panel {
             Diagnostics.note("discard overlay window=\(panel.windowNumber) after display change")
@@ -49,7 +49,6 @@ final class OverlayPanel {
     }
 }
 
-/// Make a nonactivating panel for all Spaces, including full screen Spaces.
 @MainActor
 private func makeOverlayPanel() -> (panel: NSPanel, content: NSView) {
     let panel = NSPanel(contentRect: .zero,
@@ -65,7 +64,7 @@ private func makeOverlayPanel() -> (panel: NSPanel, content: NSView) {
     panel.hasShadow = true
     panel.ignoresMouseEvents = true
     panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
-    // The blur is dark also in Light mode. The palette is light on dark.
+    // Keep the background dark in Light mode so the light text stays legible.
     panel.appearance = NSAppearance(named: .darkAqua)
 
     let blur = NSVisualEffectView()

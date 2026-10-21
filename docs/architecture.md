@@ -116,7 +116,11 @@ The stored front app of the previous Space is restored only if that Space is no 
 It checks unknown sections, unknown fields, value types, action parameters, and chord conflicts.
 No parsed action owns runtime state.
 
-Switcher triggers are validated before local bindings.
+The `keys` object maps each chord to an action name.
+The switcher actions are `switch-all-windows` and `switch-app-windows`.
+A custom switcher trigger replaces the default trigger for that action.
+Each switcher accepts one trigger.
+`Config` checks switcher triggers before local bindings.
 Shift selects reverse traversal.
 Different trigger modifiers cannot distinguish two switchers that use the same physical key during a traversal.
 Such a conflict restores both defaults.

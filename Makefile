@@ -6,7 +6,7 @@ APP       := build/$(APP_NAME).app
 # CI uses IDENTITY=- because no signing certificate is available.
 IDENTITY ?= CmdTab Self-Signed
 
-# Ship and test the same release configuration.
+# Test the same build configuration that users run.
 
 .PHONY: all cert build test app install uninstall run stop reset-permissions clean
 
@@ -51,7 +51,7 @@ run: app stop
 stop:
 	-@pkill -x $(APP_NAME) 2>/dev/null; true
 
-# Reset permission after a signing identity change.
+# Reset Accessibility permission after a change to the app signature.
 reset-permissions:
 	tccutil reset Accessibility $(BUNDLE_ID)
 

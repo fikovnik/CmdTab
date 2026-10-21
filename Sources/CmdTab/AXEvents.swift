@@ -1,10 +1,9 @@
 import AppKit
 import ApplicationServices
 
-/// One AX observer per app. AX reports focus changes within an app.
+/// Use one AX observer per app to receive focus changes within the app.
 @MainActor
 enum AXEvents {
-    /// Start new observers and remove observers for apps that stopped.
     static func sync(_ pids: Set<pid_t>) {
         for pid in observers.keys where !pids.contains(pid) {
             if let observer = observers.removeValue(forKey: pid) {
@@ -32,7 +31,7 @@ enum AXEvents {
                 Diagnostics.note("AX observer pid=\(pid) notification=\(name) error=\(result.rawValue)")
             }
         }
-        // `.commonModes`, so that notifications also arrive while the event tap is busy.
+        // Keep notifications active while a menu is open.
         CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .commonModes)
         return observer
     }
@@ -40,11 +39,10 @@ enum AXEvents {
 
 @MainActor private var observers: [pid_t: AXObserver] = [:]
 
-/// Use a C function. Swift 6 can fail to compile a closure as an AXObserverCallback.
 private func axEventsCallback(_ observer: AXObserver, _ element: AXUIElement,
                               _ name: CFString, _ context: UnsafeMutableRawPointer?) {
     let name = name as String
-    // AX observers use the main run loop. Keep the C element reference within this synchronous call.
+    // Keep the AX element in this synchronous call on the main run loop.
     nonisolated(unsafe) let window = element
     MainActor.assumeIsolated {
         let tracker = WindowTracker.shared
@@ -57,7 +55,7 @@ private func axEventsCallback(_ observer: AXObserver, _ element: AXUIElement,
             tracker.scheduleRefresh()
             return
         }
-        // Ignore title changes from controls inside a window.
+        // Window controls can also emit title notifications. Accept only window elements.
         guard window.string(kAXRoleAttribute) == kAXWindowRole,
               let id = window.windowID, let pid = window.pid else { return }
         tracker.update(id, element: window, title: window.string(kAXTitleAttribute))

@@ -1,38 +1,36 @@
 import AppKit
 import CmdTabModel
 
-/// One window that the switcher can show.
 struct Window: Identifiable {
     let id: CGWindowID
     let pid: pid_t
     let appName: String
     let icon: NSImage?
     var title = ""
-    /// The Spaces for this window, in layout order.
+    /// Keep the Spaces for this window in layout order.
     var spaces: [SpaceID] = []
-    /// The stack position on a visible Space, or on the first Space.
+    /// Use the stack position on the first visible Space. If none is visible, use the first Space.
     var zOrder = 0
-    /// Nil until AX returns the window.
+    /// Keep this value nil until AX returns a window element.
     var element: AXUIElement?
-    /// False if AX gives a subrole other than a standard window or a dialog.
+    /// If AX reports a subrole other than a standard window or dialog, set this value to false.
     var isStandard = true
-    /// Keep the last known AX state when a window leaves a visible Space.
+    /// If AX omits the window, keep its last known minimized state.
     var isMinimized = false
-    /// "Desktop 2", "All Desktops". Only `list` in the all-Spaces scope sets it.
+    /// Only all-Spaces lists include this label.
     var spaceLabel: String?
 }
 
-/// Which windows the switcher lists.
 enum WindowScope {
-    /// All windows on all Spaces. "Go back to the previous window" must also
-    /// work across Spaces.
+    /// Include windows on other Spaces so the previous window stays available.
     case allSpaces
-    /// The windows on the visible Spaces of all displays.
+    /// Include the visible Space of each display.
     case currentSpace
 }
 
-/// The window records and observed focus order. The WindowServer supplies IDs and Space membership.
-/// AX supplies elements, titles, subroles, and minimized state. Keep AX data when a window leaves a visible Space.
+/// The WindowServer supplies IDs and Space membership.
+/// AX supplies elements, titles, subroles, and minimized state.
+/// If a window leaves the visible Spaces, keep its AX data.
 @MainActor
 final class WindowTracker {
     static let shared = WindowTracker()
@@ -41,14 +39,15 @@ final class WindowTracker {
     private(set) var recent = RecentWindows()
     private var refreshTimer: Timer?
     private var settleTimer: Timer?
-    /// The ID captured before a switch. Avoid another capture after the window becomes covered.
+    /// Keep the ID of the window captured before a switch.
+    /// Avoid another capture after the window becomes covered.
     private var capturedBeforeSwitch: CGWindowID?
 
     func start() {
         let center = NSWorkspace.shared.notificationCenter
         center.addObserver(forName: NSWorkspace.didActivateApplicationNotification,
                            object: nil, queue: .main) { [weak self] notification in
-            // `Notification` is not `Sendable`. Read the pid before the main actor hop.
+            // Read the process ID before the actor isolation scope. `Notification` does not conform to `Sendable`.
             let pid = (notification.userInfo?[NSWorkspace.applicationUserInfoKey]
                 as? NSRunningApplication)?.processIdentifier
             MainActor.assumeIsolated {
@@ -109,7 +108,6 @@ final class WindowTracker {
         WindowPreview.shared.retain(live)
     }
 
-    /// Update server records and AX descriptions after workspace events.
     func refresh() {
         let started = Date()
         let layout = Spaces.layout()
@@ -127,17 +125,17 @@ final class WindowTracker {
         }
 
         AXEvents.sync(Set(apps.keys))
-        // This runs on the main thread, which also handles the event tap.
+        // AX scans share the main thread with the event tap.
         Diagnostics.note(String(format: "refresh: %.0f ms", Date().timeIntervalSince(started) * 1000))
     }
 
-    /// Use one refresh for a group of workspace events.
+    /// Combine a group of workspace events into one refresh.
     func scheduleRefresh() {
         refreshTimer?.invalidate()
         let timer = Timer(timeInterval: 0.3, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated { self?.refresh() }
         }
-        // `.common`, so that the timer also fires while the event tap is busy.
+        // Keep the refresh timer active while a menu is open.
         RunLoop.main.add(timer, forMode: .common)
         refreshTimer = timer
     }
@@ -178,7 +176,7 @@ final class WindowTracker {
         return described
     }
 
-    /// Keep the element, title, and minimized state from a window notification.
+    /// Keep the existing AX element if one is available.
     func update(_ id: CGWindowID, element: AXUIElement, title: String?, isMinimized: Bool? = nil) {
         guard windows[id] != nil else { return }
         if windows[id]?.element == nil { windows[id]?.element = element }
@@ -188,8 +186,8 @@ final class WindowTracker {
 
     // MARK: - Switcher list
 
-    /// List windows in observed focus order, with minimized windows last.
-    /// Append unseen windows in each group by visibility, Space order, and stack position.
+    /// Keep focus order within the normal and minimized groups. Put minimized windows last.
+    /// Order unseen windows by visibility, Space, and stack position.
     func list(_ scope: WindowScope, in layout: SpaceLayout) -> [Window] {
         let visible = layout.visibleSpaces
         func isVisible(_ window: Window) -> Bool { window.spaces.contains(where: visible.contains) }
@@ -227,7 +225,7 @@ final class WindowTracker {
         capturedBeforeSwitch = id
     }
 
-    /// Reads the focused window of app `pid` as a focus answer.
+    /// Read focus only if `pid` identifies the frontmost app.
     func readFocus(of pid: pid_t) {
         guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
               let id = AXUIElement.application(pid).element(kAXFocusedWindowAttribute)?.windowID
@@ -235,7 +233,6 @@ final class WindowTracker {
         focusReported(id, pid: pid)
     }
 
-    /// App `pid` reports `id` as its focused window.
     func focusReported(_ id: CGWindowID, pid: pid_t) {
         // Capture the previous window before its app releases the image surface.
         if let leaving = recent.order.first, leaving != id, leaving != capturedBeforeSwitch,
@@ -261,7 +258,7 @@ final class WindowTracker {
         settleTimer = timer
     }
 
-    /// The running apps that can have windows in the switcher, without CmdTab.
+    /// Exclude accessory apps and CmdTab.
     static func regularApps() -> [pid_t: NSRunningApplication] {
         var apps: [pid_t: NSRunningApplication] = [:]
         for app in NSWorkspace.shared.runningApplications where app.activationPolicy == .regular {

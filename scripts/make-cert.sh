@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Create a stable signing identity in the login keychain.
-# A certificate-based designated requirement stays constant between builds.
-# An ad hoc signature uses the binary hash and changes on each build.
-# Keep an existing certificate.
+# Keep one identity so the designated requirement stays constant between builds.
+# An ad hoc signature depends on the binary hash.
 set -euo pipefail
 
 NAME="${1:-CmdTab Self-Signed}"

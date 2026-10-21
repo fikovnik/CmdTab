@@ -2,10 +2,10 @@ import AppKit
 import CmdTabConfig
 import CmdTabModel
 
-/// Execute parsed action values with AX, the WindowServer, or an external process.
+/// Run window, desktop, shell, and AppleScript actions after the event tap returns.
 @MainActor
 final class WindowActionHost {
-    /// The frames before maximize. Remove closed windows before each maximize action.
+    /// Keep the position and size before maximize so the next press can restore them.
     private var restoreFrames: [CGWindowID: CGRect] = [:]
     private var tileRequest = 0
 
@@ -60,7 +60,7 @@ final class WindowActionHost {
         } else { applyTile(edge, target: target) }
     }
 
-    /// Wait for the full screen transition before reading the desktop frame.
+    /// Wait for full screen exit before you read the display frame.
     private func finishTile(_ edge: WindowEdge, target: WindowGeometry.Target,
                             request: Int, deadline: TimeInterval) {
         guard request == tileRequest else { return }
@@ -81,7 +81,7 @@ final class WindowActionHost {
         WindowGeometry.setFrame(Layout.next(edge: edge, window: current, in: visible), on: target)
     }
 
-    /// Center applies only to desktop windows.
+    /// Apply center actions only to windows outside full screen.
     private func center() {
         guard let target = WindowGeometry.focused(),
               WindowGeometry.isFullScreen(target.window) != true,
@@ -103,9 +103,8 @@ final class WindowActionHost {
         }
     }
 
-    /// Maximize fills the visible frame of the screen, so that the menu bar and
-    /// the Dock stay visible. Full screen uses the full display and its own
-    /// Space.
+    /// Maximize uses the display area outside the menu bar and Dock.
+    /// Native full screen uses a separate Space.
     private func toggleMaximize() {
         guard let target = WindowGeometry.focused(),
               WindowGeometry.isFullScreen(target.window) != true,
@@ -119,8 +118,7 @@ final class WindowActionHost {
 
         if Layout.isMaximized(current, in: visible) {
             guard let restore = restoreFrames.removeValue(forKey: target.id) else {
-                // CmdTab did not maximize the window, so there is no frame to
-                // restore. Use the left half, which is better than no change.
+                // If CmdTab has no previous frame, restore the window to the left half.
                 WindowGeometry.setFrame(Layout.frame(edge: .left, fraction: Layout.fractions[0],
                                                      in: visible), on: target)
                 return

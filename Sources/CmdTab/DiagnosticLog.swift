@@ -1,8 +1,8 @@
 import Foundation
 import os
 
-/// Serializes file writes off the event tap thread. The previous file is kept
-/// when the log rotates, so a burst of events does not erase the failure.
+/// Write files on a serial worker queue.
+/// Keep one previous file when the log exceeds the size limit.
 final class DiagnosticLog: Sendable {
     let url: URL
     let previousURL: URL
@@ -23,7 +23,7 @@ final class DiagnosticLog: Sendable {
         }
     }
 
-    /// A menu export waits for earlier events before appending its report.
+    /// Wait for earlier writes before you add the report.
     func appendAndWait(_ text: String) throws {
         try queue.sync { try write(text) }
     }

@@ -9,7 +9,6 @@ private let footerHeight: CGFloat = 26
 private let scrollBarWidth: CGFloat = 4
 private let minWidth: CGFloat = 300
 private let maxWidth: CGFloat = 760
-/// Limit the visible rows. Scroll when the selection moves outside them.
 private let rowCap = 14
 
 /// Use a dark background over the blur to keep light text legible.
@@ -24,7 +23,7 @@ private enum Palette {
     static let matchBackground = NSColor.yellow
     static var selection: NSColor { .controlAccentColor }
 
-    /// Select black or white text from the accent color luminance.
+    /// Choose black or white text to preserve contrast with the accent color.
     static var onSelection: NSColor {
         guard let rgb = selection.usingColorSpace(.sRGB) else { return .white }
         let luminance = 0.2126 * rgb.redComponent
@@ -56,7 +55,6 @@ final class HUDView: NSView {
                       height: listHeight + footerHeight + padding * 2)
     }
 
-    /// Scrolls the list so that the selected row is visible.
     func scrollToSelection() {
         let rows = visibleRows
         guard rows > 0 else { return }
@@ -224,14 +222,14 @@ final class HUDPanel {
     private var panel: NSPanel? { overlay.panel }
     private let view = HUDView()
 
-    /// The trigger modifier glyphs for the footer.
+    /// The footer shows the modifiers that the user must release.
     static var modifierHint = "\u{2318}"
 
     static var keyHint: String {
         "↑↓ move · → this Space · release \(modifierHint) to switch · esc cancel"
     }
 
-    /// The row capacity on the active screen. Page steps use this value.
+    /// Page steps use the row capacity of the display with the pointer.
     var rowCapacity: Int { maxRows(on: activeScreen()) }
 
     var diagnosticSummary: String {
@@ -246,8 +244,9 @@ final class HUDPanel {
         return "HUD: window=\(panel.windowNumber) visible=\(panel.isVisible) onScreen=\(onScreen) spaces=\(spaces) occlusion=\(panel.occlusionState.rawValue) frame=\(panel.frame) screen=\(panel.screen?.localizedName ?? "nil")"
     }
 
-    /// The frame and the screen of the panel. The preview shows next to it.
-    /// `nil` while the panel is hidden.
+    /// The preview uses this frame as its anchor.
+    /// Use the display with the pointer for the preview.
+    /// Return nil while the panel is hidden.
     var anchor: (frame: NSRect, screen: NSScreen)? {
         guard let panel, panel.isVisible else { return nil }
         return (panel.frame, activeScreen())

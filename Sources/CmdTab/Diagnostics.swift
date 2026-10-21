@@ -2,7 +2,7 @@ import AppKit
 import Carbon.HIToolbox
 import os
 
-/// Use log stream with subsystem net.fikovnik.cmdtab. Include debug events for routine traces.
+/// Use `log stream` with the `net.fikovnik.cmdtab` subsystem. Include debug events to see routine traces.
 private let logger = Logger(subsystem: "net.fikovnik.cmdtab", category: "diagnostics")
 
 @MainActor
@@ -12,7 +12,6 @@ enum Diagnostics {
     private static let preferenceKey = "diagnosticLoggingEnabled"
     private(set) static var isLoggingEnabled = UserDefaults.standard.bool(forKey: preferenceKey)
 
-    /// Keep the last 300 recorded events.
     private static let capacity = 300
 
     /// Build routine messages only when diagnostic logging is on.
@@ -23,7 +22,7 @@ enum Diagnostics {
         record(message, level: "trace")
     }
 
-    /// Errors remain available in Console and the report when routine logging is off.
+    /// Record errors even when diagnostic logging is off.
     static func error(_ text: String) {
         logger.error("\(text, privacy: .public)")
         record(text, level: "error")
@@ -73,8 +72,8 @@ enum Diagnostics {
         for scope in [WindowScope.currentSpace, .allSpaces] {
             let list = tracker.list(scope, in: layout)
             out += "\n== \(scope) (\(list.count)) ==\n"
-            // `recent=-`: the window never had focus, so it comes after the
-            // windows that had. `server`: AX has not returned the window yet.
+            // `recent=-` means that CmdTab has no focus record.
+            // `server` means that AX supplied no window element.
             for window in list {
                 let rank = tracker.recent.order.firstIndex(of: window.id).map(String.init) ?? "-"
                 let kind = window.element == nil ? "server" : "ax"
@@ -99,7 +98,7 @@ enum Diagnostics {
         return out
     }
 
-    /// Save the current report after all queued events, regardless of the logging setting.
+    /// Save the current report after all queued events. Ignore the diagnostic logging setting.
     static func trace(_ reason: String, context: String = "") throws {
         var entry = "\n\n===== \(Date()) — \(reason) =====\n"
         entry += report(context: context)

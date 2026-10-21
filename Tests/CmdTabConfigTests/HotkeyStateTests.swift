@@ -27,6 +27,30 @@ final class HotkeyStateTests: XCTestCase {
                        .step(1, wrap: true))
     }
 
+    func testCustomSwitcherActionsStartTheirModesAndShareNavigationKeys() throws {
+        let config = Config.parse(Data(#"""
+        { "keys": { "ctrl-a": "switch-all-windows", "alt-b": "switch-app-windows" } }
+        """#.utf8))
+        XCTAssertEqual(config.errors, [])
+        var state = HotkeyState()
+        state.bindings = config.bindings
+        let appTrigger = try Chord(parsing: "alt-b")
+        let allTrigger = try Chord(parsing: "ctrl-a")
+
+        XCTAssertEqual(state.handle(.keyDown, key: appTrigger.keyCode, modifiers: .option),
+                       .start(.currentApp, appTrigger, reversed: false))
+        XCTAssertEqual(state.handle(.keyDown, key: allTrigger.keyCode, modifiers: .option),
+                       .step(-1, wrap: true))
+        XCTAssertEqual(state.handle(.keyDown, key: appTrigger.keyCode, modifiers: .option),
+                       .step(1, wrap: true))
+        XCTAssertEqual(state.handle(.flagsChanged, key: 0, modifiers: []),
+                       .finish(commit: true, consume: false))
+        XCTAssertEqual(state.handle(.keyDown, key: allTrigger.keyCode, modifiers: .control),
+                       .start(.allWindows, allTrigger, reversed: false))
+        XCTAssertEqual(state.handle(.keyDown, key: appTrigger.keyCode, modifiers: .control),
+                       .step(-1, wrap: true))
+    }
+
     func testCancellationConsumesItsKeyReleaseAndClearsTheHold() {
         var state = keyboard()
         _ = state.handle(.keyDown, key: UInt16(kVK_Tab), modifiers: .command)
@@ -74,7 +98,7 @@ final class HotkeyStateTests: XCTestCase {
     }
 
     func testMultiModifierTriggerCommitsWhenEitherModifierIsReleased() throws {
-        let config = Config.parse(Data(#"{"switch-all-windows":{"trigger":"ctrl-alt-tab"}}"#.utf8))
+        let config = Config.parse(Data(#"{"keys":{"ctrl-alt-tab":"switch-all-windows"}}"#.utf8))
         var state = HotkeyState()
         state.bindings = config.bindings
         let trigger = try Chord(parsing: "ctrl-alt-tab")
@@ -119,7 +143,7 @@ final class HotkeyStateTests: XCTestCase {
 
     func testNavigationAndConfiguredLetterTriggersTakePrecedenceOverText() {
         var state = HotkeyState()
-        state.bindings = Config.parse(Data(#"{"switch-all-windows":{"trigger":"cmd-a"}}"#.utf8)).bindings
+        state.bindings = Config.parse(Data(#"{"keys":{"cmd-a":"switch-all-windows"}}"#.utf8)).bindings
         _ = state.handle(.keyDown, key: UInt16(kVK_ANSI_A), modifiers: .command)
         XCTAssertEqual(state.handle(.keyDown, key: UInt16(kVK_ANSI_A), modifiers: .command,
                                     text: "a", acceptsFilterInput: true), .step(1, wrap: true))
@@ -155,7 +179,7 @@ final class HotkeyStateTests: XCTestCase {
         _ = state.handle(.keyDown, key: UInt16(kVK_ANSI_Grave), modifiers: .command)
         XCTAssertEqual(state.handle(.keyDown, key: UInt16(kVK_ANSI_S), modifiers: .command,
                                     text: "s", acceptsFilterInput: true), .appendFilterText("s"))
-        state.bindings = Config.parse(Data(#"{"switch-all-windows":{"trigger":"ctrl-alt-tab"}}"#.utf8)).bindings
+        state.bindings = Config.parse(Data(#"{"keys":{"ctrl-alt-tab":"switch-all-windows"}}"#.utf8)).bindings
         _ = state.handle(.keyDown, key: UInt16(kVK_Tab), modifiers: [.control, .option])
         XCTAssertEqual(state.handle(.keyDown, key: UInt16(kVK_ANSI_S), modifiers: [.control, .option],
                                     text: "s", acceptsFilterInput: true), .appendFilterText("s"))

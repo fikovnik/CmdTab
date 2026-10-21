@@ -10,10 +10,10 @@ private let previewDelay: TimeInterval = 0.2
 
 @MainActor
 final class Switcher {
-    /// The state of one traversal. Clear the session to end the traversal.
+    /// Clear the session to end the traversal.
     struct Session {
         let mode: SwitchMode
-        /// The process filter for current app mode.
+        /// Keep the process that had focus when the traversal started.
         let appFilter: pid_t?
         var traversal: WindowTraversal<Window>
         var candidates: [Window] = []
@@ -21,7 +21,7 @@ final class Switcher {
         var scope = WindowScope.allSpaces
         /// Show the list after the reveal timer and window scan complete.
         var wantsHUD = false
-        /// Keep the HUD and keyboard capture available when filtering removes every row.
+        /// Keep the HUD and keyboard capture available if the filter removes every row.
         var hasShownHUD = false
 
         var scopeLabel: String { scope == .allSpaces ? "All Spaces" : "This Space" }
@@ -54,7 +54,7 @@ final class Switcher {
             + hud.diagnosticSummary + "\nPreview: showing=\(preview.isShowing)"
     }
 
-    /// The page size, including when the list is hidden.
+    /// Keep page steps available before the list appears.
     var pageSize: Int {
         let capacity = hud.rowCapacity
         return max(1, min(session?.traversal.windows?.count ?? capacity, capacity))
@@ -64,7 +64,7 @@ final class Switcher {
         Diagnostics.note("screen parameters changed: \(hud.diagnosticSummary)")
         preview.resetDisplayConfiguration()
         hud.resetDisplayConfiguration()
-        // Keep the current selection if a display changes while Cmd is held.
+        // If a display changes during a traversal, keep the current selection.
         showHUD()
     }
 
@@ -77,7 +77,7 @@ final class Switcher {
         )
         Diagnostics.note("start \(mode) reversed=\(reversed)")
 
-        // `.common`, so that the timer also fires while the event tap is busy.
+        // Keep the reveal timer active while a menu is open.
         let timer = Timer(timeInterval: revealDelay, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated { self?.reveal() }
         }
@@ -90,8 +90,8 @@ final class Switcher {
         }
     }
 
-    /// `delta` is +1 for forward and -1 for back. If `wrap` is false, as for a
-    /// page move, the selection stops at the first or the last row.
+    /// Positive deltas move forward. Negative deltas move back.
+    /// If `wrap` is false, stop at the first or last row.
     func step(_ delta: Int, wrap: Bool = true) {
         guard var session else { return }
         session.traversal.step(delta, wrap: wrap)
@@ -125,7 +125,7 @@ final class Switcher {
         guard var session else { return }
         session.scope = session.scope == .allSpaces ? .currentSpace : .allSpaces
         self.session = session
-        // Do the scan after the callback, as in `start`.
+        // Defer the scan until the event tap callback returns.
         DispatchQueue.main.async { [weak self] in
             MainActor.assumeIsolated { self?.reload() }
         }
@@ -163,7 +163,6 @@ final class Switcher {
         guard var session else { return }
         session.wantsHUD = true
         self.session = session
-        // Record whether the scan completed before the reveal timer.
         Diagnostics.note("reveal timer: windows=\(session.traversal.windows?.count.description ?? "nil")")
         showHUD()
     }
@@ -200,7 +199,6 @@ final class Switcher {
             return
         }
 
-        // `.common`, for the same reason as the reveal timer.
         let timer = Timer(timeInterval: previewDelay, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated { self?.showPreview() }
         }
@@ -242,8 +240,7 @@ final class Switcher {
     /// Read the candidates outside the event tap. Text edits reuse this list.
     private static func scan(_ session: Session) -> [Window] {
         let tracker = WindowTracker.shared
-        // The window that the user leaves goes first. Then the next window in
-        // the list is the previous window, on any Space.
+        // Put the current window first so the next step selects the previous window on any Space.
         tracker.promoteFrontWindow()
         let layout = Spaces.layout()
         tracker.syncWithServer(layout)

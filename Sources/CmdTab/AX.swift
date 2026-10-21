@@ -1,9 +1,9 @@
 import ApplicationServices
 
-/// Typed access to AX. Check CF type IDs before casts to CF types.
+/// Check CF type IDs before you cast to CF types.
 @MainActor
 extension AXUIElement {
-    /// Set the timeout for every AX element in this process, including notification elements.
+    /// Apply the timeout to all AX elements in this process, including notification elements.
     static func configureTimeout() {
         AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), 0.1)
     }
@@ -31,14 +31,14 @@ extension AXUIElement {
 
     func elements(_ attribute: String) -> [AXUIElement]? { value(attribute) as? [AXUIElement] }
 
-    /// Several attributes in one call to the app. A missing attribute gives nil.
+    /// Read several attributes in one request. Return nil for each attribute that AX cannot read.
     func values(_ attributes: [String]) -> [CFTypeRef?] {
         var raw: CFArray?
         let status = AXUIElementCopyMultipleAttributeValues(self, attributes as CFArray, [], &raw)
         recordFailure(status, operation: attributes.joined(separator: ","))
         guard status == .success, let values = raw as? [CFTypeRef], values.count == attributes.count
         else { return attributes.map { _ in nil } }
-        // The call puts an `AXValue` of type `.axError` where an attribute is missing.
+        // AX can return an error value instead of an attribute value.
         return values.map { value in
             if CFGetTypeID(value) == CFNullGetTypeID() { return nil }
             if CFGetTypeID(value) == AXValueGetTypeID(), AXValueGetType(value as! AXValue) == .axError {
@@ -48,8 +48,6 @@ extension AXUIElement {
         }
     }
 
-    /// The WindowServer ID of a window element. A descendant of a window, for
-    /// example a button, gives the ID of its window.
     var windowID: CGWindowID? {
         var id: CGWindowID = 0
         guard _AXUIElementGetWindow(self, &id) == .success, id != 0 else { return nil }
@@ -84,7 +82,7 @@ extension AXUIElement {
         }
     }
 
-    /// The AX window with this ID. AX can omit windows on other Spaces.
+    /// AX can omit windows on other Spaces.
     static func window(_ id: CGWindowID, pid: pid_t) -> AXUIElement? {
         application(pid).elements(kAXWindowsAttribute)?.first { $0.windowID == id }
     }

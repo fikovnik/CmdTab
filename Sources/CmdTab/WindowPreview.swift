@@ -1,7 +1,7 @@
 import AppKit
 import CmdTabModel
 
-/// One cached image per window. Captures occur before a switch and when a visible row is selected.
+/// Keep one image per window. Retain the previous image if a new capture fails.
 @MainActor
 final class WindowPreview {
     static let shared = WindowPreview()
@@ -34,14 +34,15 @@ final class WindowPreview {
     var cachedBytes: Int { cache.values.reduce(0) { $0 + $1.bytes } }
     var cachedWindowIDs: Set<CGWindowID> { Set(cache.keys) }
 
-    /// Coalesce captures during a burst of focus events.
+    /// Skip a capture if the cached image is less than 0.5 seconds old.
     func capture(_ id: CGWindowID) {
         if let frame = cache[id], clock() - frame.taken < 0.5 { return }
         guard let image = snapshot(id) else { return }
         store(image, for: id)
     }
 
-    /// Refresh visible images after two seconds. Keep images from other Spaces until the next visit.
+    /// Refresh stale images only on visible Spaces.
+    /// Capture a window on another Space only if it has no cached image.
     func show(_ window: Window, isVisible: Bool, anchor: NSRect, on screen: NSScreen) {
         let stale = cache[window.id].map { clock() - $0.taken > 2 } ?? true
         if cache[window.id] == nil || (isVisible && stale) {
@@ -87,7 +88,8 @@ final class WindowPreview {
             }.joined()
     }
 
-    /// Reject incomplete frames from a resize or a Space animation.
+    /// Compare the nominal pixel dimensions with the window size in points.
+    /// Reject a difference of more than two points.
     private static func snapshot(_ id: CGWindowID) -> CGImage? {
         guard CGPreflightScreenCaptureAccess() else { return nil }
         guard let expected = WindowServer.size(ofWindow: id),
@@ -100,7 +102,7 @@ final class WindowPreview {
         return image
     }
 
-    /// Bound both pixel dimensions. A narrow portrait window can have a large height.
+    /// Limit both pixel dimensions. A portrait window can exceed the height limit even when its width is small.
     private static func resample(_ image: CGImage) -> CGImage? {
         let limit = PreviewLayout.maximumSize
         let scale = min(limit.width * 2 / CGFloat(image.width),

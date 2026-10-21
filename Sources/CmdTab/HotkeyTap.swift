@@ -121,7 +121,7 @@ final class HotkeyTap {
         case .appendFilterText(let text): switcher.appendFilterText(text)
         case .deleteFilterCharacter: switcher.deleteFilterCharacter()
         case .perform(let action):
-            // AX and process creation must occur after the event tap returns.
+            // Defer AX requests and process creation to avoid an event tap timeout.
             DispatchQueue.main.async { [host] in host.run(action) }
         }
         return command.consumesEvent

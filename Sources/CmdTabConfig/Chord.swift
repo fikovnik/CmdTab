@@ -1,7 +1,7 @@
 import Carbon.HIToolbox
 import Foundation
 
-/// A key code and modifier mask. Key names refer to physical ANSI keyboard positions.
+/// Use physical ANSI keyboard positions for key names.
 public struct Chord: Hashable, Sendable {
     public struct Modifiers: OptionSet, Hashable, Sendable {
         public let rawValue: UInt32
@@ -13,7 +13,7 @@ public struct Chord: Hashable, Sendable {
         public static let command = Modifiers(rawValue: 0x0010_0000)
         public static let function = Modifiers(rawValue: 0x0080_0000)
 
-        /// The supported modifier mask. Arrow and function keys set fn automatically, so configuration cannot bind fn.
+        /// Arrow and function keys set `fn` automatically. Configuration cannot bind `fn`.
         public static let tapMatchable: Modifiers = [.shift, .control, .option, .command]
     }
 
@@ -39,14 +39,14 @@ public struct Chord: Hashable, Sendable {
         }
     }
 
-    /// Parses a chord such as `"ctrl-alt-cmd-h"`. The modifiers can be in any
-    /// order.
+    /// The modifiers can appear in any order.
     public init(parsing text: String) throws {
         let lower = text.lowercased()
         var tokens = lower.split(separator: "-").map(String.init)
         let keyName: String
         if lower.hasSuffix("-") {
-            // A separator at the end names the minus key, for example "cmd--" or "-".
+            // If the chord ends with a hyphen, use the minus key.
+            // For example, `cmd--` and `-` select the minus key.
             keyName = "minus"
         } else {
             guard let last = tokens.popLast() else { throw ParseError.empty }
@@ -74,7 +74,7 @@ public struct Chord: Hashable, Sendable {
         Chord(keyCode: keyCode, modifiers: modifiers.subtracting(m))
     }
 
-    /// Modifier glyphs in Apple order. The footer shows which keys to release.
+    /// Show modifier glyphs in Apple order. The footer shows which modifiers to release.
     public var modifierDisplay: String {
         var s = ""
         if modifiers.contains(.function) { s += "fn" }
@@ -111,11 +111,10 @@ public struct Chord: Hashable, Sendable {
 
     private struct Key: Sendable {
         let code: UInt16
-        /// The ASCII character, or `0xFFFF` if the key has no ASCII character.
+        /// If the key has no ASCII character, use `0xFFFF`.
         let char: UInt16
     }
 
-    /// Map each key name or alias to a physical key code and display character.
     private static let keys: [String: Key] = {
         var t: [String: Key] = [:]
         func add(_ name: String, _ code: Int, _ char: UInt16, aliases: [String] = []) {
