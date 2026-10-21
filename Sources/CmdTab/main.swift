@@ -5,9 +5,13 @@ let arguments = CommandLine.arguments
 if arguments.contains("--report") {
     _ = NSApplication.shared
     AXUIElement.configureTimeout()
-    WindowTracker.shared.refresh()
-    print(Diagnostics.report())
-    Diagnostics.flush()
+    Task { @MainActor in
+        await WindowTracker.shared.refresh()
+        print(Diagnostics.report())
+        Diagnostics.flush()
+        exit(0)
+    }
+    RunLoop.main.run()
     exit(0)
 }
 

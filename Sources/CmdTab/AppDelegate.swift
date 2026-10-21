@@ -38,7 +38,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                Focus.spaceDidChange()
                 WindowTracker.shared.scheduleRefresh()
                 self.updateStatusTitle()
                 Diagnostics.note("active Space changed")

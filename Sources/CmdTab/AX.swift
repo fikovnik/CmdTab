@@ -1,7 +1,11 @@
 import ApplicationServices
 
+/// Transfer the AX handle without app state. Set its timeout only at process startup.
+struct AXReference: @unchecked Sendable {
+    let element: AXUIElement
+}
+
 /// Check CF type IDs before you cast to CF types.
-@MainActor
 extension AXUIElement {
     /// Apply the timeout to all AX elements in this process, including notification elements.
     static func configureTimeout() {
@@ -75,10 +79,14 @@ extension AXUIElement {
     }
 
     private func recordFailure(_ status: AXError, operation: String) {
-        if status == .cannotComplete {
-            Diagnostics.error("AX request failed or timed out pid=\(pid ?? 0) operation=\(operation)")
-        } else if status != .success {
-            Diagnostics.note("AX request pid=\(pid ?? 0) operation=\(operation) error=\(status.rawValue)")
+        guard status != .success else { return }
+        let pid = pid ?? 0
+        Task { @MainActor in
+            if status == .cannotComplete {
+                Diagnostics.error("AX request failed or timed out pid=\(pid) operation=\(operation)")
+            } else {
+                Diagnostics.note("AX request pid=\(pid) operation=\(operation) error=\(status.rawValue)")
+            }
         }
     }
 

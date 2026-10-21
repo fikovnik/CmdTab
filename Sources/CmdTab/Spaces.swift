@@ -4,13 +4,13 @@ import CmdTabModel
 /// Read Space data from the WindowServer and display geometry from Core Graphics.
 @MainActor
 enum Spaces {
-    static func layout() -> SpaceLayout {
+    nonisolated static func layout() -> SpaceLayout {
         let raw = CGSCopyManagedDisplaySpaces(CGSMainConnectionID())?.takeRetainedValue()
         return SpaceLayout(managedDisplaySpaces: raw as? [[String: Any]] ?? [])
     }
 
     /// Return the UUID of the display with the active menu bar.
-    static func activeDisplayIdentifier() -> String? {
+    nonisolated static func activeDisplayIdentifier() -> String? {
         CGSCopyActiveMenuBarDisplayIdentifier(CGSMainConnectionID())?.takeRetainedValue() as String?
     }
 

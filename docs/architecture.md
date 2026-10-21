@@ -15,9 +15,10 @@ The model and configuration targets do not open windows or call private APIs.
 
 App state belongs to the main actor.
 The event tap and AX observers use the main run loop.
-Commands use worker queues.
+Focus commands, AX refreshes, and external commands use worker queues.
 `DiagnosticLog` serializes file writes on its own queue.
 Swift 6 checks actor isolation.
+Immutable AX handles cross queues through `AXReference`.
 One synchronous AX callback uses an unsafe reference to pass its C argument into the main actor.
 
 ## Window records and order
@@ -38,6 +39,11 @@ The server still supplies its Space membership and removes it when it closes.
 A server scan replaces the live records.
 Known windows from hidden apps remain available because the server omits them.
 The scan removes closed records from focus order, pending focus reports, and preview storage.
+
+Full AX scans use one worker and return value snapshots to the main actor.
+Only one refresh can run at a time.
+A refresh request during a scan schedules one more scan.
+Event updates take precedence over older scan results.
 
 `RecentWindows` records observed focus, not requested focus.
 Workspace activation and AX focused window notifications supply observations.
@@ -100,15 +106,20 @@ Each queued request owns its session.
 A later commit cannot overwrite an earlier queued session.
 Cancellation clears the session and both timers.
 
-`Focus` shows a hidden target Space through `SpaceSwitcher`.
-It continues after a matching Space notification, or after a one-second timeout.
-It unhides the app, restores a minimized window, fronts the process, sends the key-window event, and raises the AX window.
-An invalid AX element gets one new lookup.
-A new focus request cancels an older pending request.
+`Focus` sends its commands through one serial worker.
+It unhides the app and restores a window when its cached state says it is minimized.
+It then fronts the target, sends the key-window event, and raises the AX window.
+The front request lets macOS select the target Space.
+Focus does not wait for a Space notification or send a Dock swipe.
+AX lookup follows the front request unless a minimized window needs an element before restore.
+An invalid AX element gets one new lookup, which also replaces the cached element.
+Each new request invalidates older requests before their next command.
+The serial worker prevents overlap between focus sequences.
 
 The focus sequence does not directly change recent order.
 A subsequent observation supplies that change.
-The stored front app of the previous Space is restored only if that Space is no longer visible.
+The previous Space retains its front app when the target replaces that Space on the same display.
+A target on another display leaves the origin Space unchanged.
 
 ## Configuration and actions
 

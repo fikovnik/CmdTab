@@ -23,14 +23,6 @@ enum SpaceSwitcher {
         swipe(swipes, on: display)
     }
 
-    /// Show the target Space. Return true only if the code posts every swipe event.
-    static func show(_ space: SpaceID, in layout: SpaceLayout) -> Bool {
-        guard let display = layout.display(containing: space),
-              let swipes = display.swipes(to: space), swipes != 0
-        else { return false }
-        return swipe(swipes, on: display)
-    }
-
     private static func activeDisplay() -> SpaceLayout.Display? {
         let display = Spaces.layout().display(identifier: Spaces.activeDisplayIdentifier())
         if display == nil { Diagnostics.error("could not identify the display with the active menu bar") }

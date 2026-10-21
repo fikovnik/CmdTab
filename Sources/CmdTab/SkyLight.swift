@@ -2,7 +2,6 @@ import AppKit
 import CmdTabModel
 
 /// Keep private WindowServer declarations in this file.
-@MainActor
 enum WindowServer {
     /// Read window IDs and process IDs in stack order.
     /// Minimized windows can lack normal window attributes. Accept windows that AX confirms as minimized.
@@ -90,7 +89,9 @@ enum WindowServer {
         guard GetProcessForPID(pid, &psn) == noErr else { return false }
         let result = _SLPSSetFrontProcessWithOptions(&psn, id, userGenerated)
         guard result == .success else {
-            Diagnostics.error("front process failed id=\(id) pid=\(pid) error=\(result.rawValue)")
+            Task { @MainActor in
+                Diagnostics.error("front process failed id=\(id) pid=\(pid) error=\(result.rawValue)")
+            }
             return false
         }
         return makeKeyWindow(&psn, id) == .success

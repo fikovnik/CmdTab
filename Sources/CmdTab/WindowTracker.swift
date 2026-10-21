@@ -39,6 +39,10 @@ final class WindowTracker {
     private(set) var recent = RecentWindows()
     private var refreshTimer: Timer?
     private var settleTimer: Timer?
+    private var isRefreshing = false
+    private var refreshAgain = false
+    private var metadataVersion: UInt64 = 0
+    private var metadataVersions: [CGWindowID: UInt64] = [:]
     /// Keep the ID of the window captured before a switch.
     /// Avoid another capture after the window becomes covered.
     private var capturedBeforeSwitch: CGWindowID?
@@ -63,7 +67,7 @@ final class WindowTracker {
                 MainActor.assumeIsolated { self?.scheduleRefresh() }
             }
         }
-        refresh()
+        Task { await refresh() }
     }
 
     // MARK: - Windows
@@ -108,72 +112,66 @@ final class WindowTracker {
         WindowPreview.shared.retain(live)
     }
 
-    func refresh() {
-        let started = Date()
-        let layout = Spaces.layout()
-        syncWithServer(layout)
-
-        let apps = Self.regularApps()
-        var described = Set<CGWindowID>()
-        // An app can have only minimized windows, none of which passed the server filter.
-        for app in apps.values {
-            described.formUnion(learn(app, in: layout))
-        }
-        // Use server titles when AX cannot describe a window. Screen Recording is necessary.
-        for (id, title) in WindowServer.titles() where !described.contains(id) {
-            windows[id]?.title = title
-        }
-
-        AXEvents.sync(Set(apps.keys))
-        // AX scans share the main thread with the event tap.
-        Diagnostics.note(String(format: "refresh: %.0f ms", Date().timeIntervalSince(started) * 1000))
+    func refresh() async {
+        guard !isRefreshing else { refreshAgain = true; return }
+        isRefreshing = true
+        repeat {
+            refreshAgain = false
+            let started = ProcessInfo.processInfo.systemUptime
+            let layout = Spaces.layout()
+            syncWithServer(layout)
+            let known = Set(windows.keys)
+            let versions = metadataVersions
+            let snapshot = await WindowDescriptions.read(pids: Set(Self.regularApps().keys), known: known)
+            apply(snapshot, known: known, versions: versions, layout: layout)
+            AXEvents.sync(Set(Self.regularApps().keys))
+            metadataVersions = metadataVersions.filter { windows[$0.key] != nil }
+            Diagnostics.note(String(format: "refresh: %.0f ms (AX worker)",
+                                    (ProcessInfo.processInfo.systemUptime - started) * 1000))
+        } while refreshAgain
+        isRefreshing = false
     }
 
     /// Combine a group of workspace events into one refresh.
     func scheduleRefresh() {
         refreshTimer?.invalidate()
         let timer = Timer(timeInterval: 0.3, repeats: false) { [weak self] _ in
-            MainActor.assumeIsolated { self?.refresh() }
+            Task { @MainActor in await self?.refresh() }
         }
         // Keep the refresh timer active while a menu is open.
         RunLoop.main.add(timer, forMode: .common)
         refreshTimer = timer
     }
 
-    /// Read AX window descriptions. Focused and main window attributes can include windows on other Spaces.
-    private func learn(_ app: NSRunningApplication, in layout: SpaceLayout) -> Set<CGWindowID> {
-        let pid = app.processIdentifier
-        let values = AXUIElement.application(pid)
-            .values([kAXWindowsAttribute, kAXFocusedWindowAttribute, kAXMainWindowAttribute])
-        let list = values[0] as? [AXUIElement] ?? []
-        let single = values.dropFirst().compactMap { value in
-            value.flatMap { CFGetTypeID($0) == AXUIElementGetTypeID() ? ($0 as! AXUIElement) : nil }
-        }
-        if values.allSatisfy({ $0 == nil }) { Diagnostics.note("AX windows unavailable pid=\(pid)") }
-
+    private func apply(_ snapshot: WindowDescriptions.Snapshot, known: Set<CGWindowID>,
+                       versions: [CGWindowID: UInt64], layout: SpaceLayout) {
+        let apps = Self.regularApps()
         var described = Set<CGWindowID>()
-        for element in list + single {
-            guard let id = element.windowID, !described.contains(id) else { continue }
-            let attributes = element.values([kAXSubroleAttribute, kAXTitleAttribute, kAXMinimizedAttribute])
+        for description in snapshot.descriptions {
+            let id = description.id
+            guard let app = apps[description.pid], metadataVersions[id] == versions[id] else { continue }
             if windows[id] == nil {
-                guard attributes[2] as? Bool == true else { continue }
-                var window = Window(id: id, pid: pid, appName: app.localizedName ?? "?", icon: app.icon)
-                window.spaces = WindowServer.spaces(ofWindow: id).sorted {
+                // Do not restore a known window that a newer server scan removed.
+                guard !known.contains(id), description.isMinimized == true else { continue }
+                var window = Window(id: id, pid: description.pid, appName: app.localizedName ?? "?", icon: app.icon)
+                window.spaces = (description.spaces ?? []).sorted {
                     (layout.order(of: $0) ?? .max) < (layout.order(of: $1) ?? .max)
                 }
                 window.zOrder = .max
                 windows[id] = window
             }
-            let subrole = attributes[0] as? String
-            windows[id]?.element = element
-            if let subrole {
+            windows[id]?.element = description.element.element
+            if let subrole = description.subrole {
                 windows[id]?.isStandard = subrole == kAXStandardWindowSubrole || subrole == kAXDialogSubrole
             }
-            if let title = attributes[1] as? String { windows[id]?.title = title }
-            if let minimized = attributes[2] as? Bool { windows[id]?.isMinimized = minimized }
+            if let title = description.title { windows[id]?.title = title }
+            if let minimized = description.isMinimized { windows[id]?.isMinimized = minimized }
             described.insert(id)
         }
-        return described
+        // Keep newer title notifications when a worker returns an older snapshot.
+        for (id, title) in snapshot.titles where !described.contains(id) && metadataVersions[id] == versions[id] {
+            windows[id]?.title = title
+        }
     }
 
     /// Keep the existing AX element if one is available.
@@ -182,6 +180,15 @@ final class WindowTracker {
         if windows[id]?.element == nil { windows[id]?.element = element }
         if let title { windows[id]?.title = title }
         if let isMinimized { windows[id]?.isMinimized = isMinimized }
+        metadataVersion += 1
+        metadataVersions[id] = metadataVersion
+    }
+
+    func replaceElement(_ id: CGWindowID, with element: AXUIElement) {
+        guard windows[id] != nil else { return }
+        windows[id]?.element = element
+        metadataVersion += 1
+        metadataVersions[id] = metadataVersion
     }
 
     // MARK: - Switcher list

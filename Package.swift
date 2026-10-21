@@ -22,7 +22,7 @@ let package = Package(
             name: "CmdTab",
             dependencies: ["CmdTabConfig", "CmdTabModel"],
             path: "Sources/CmdTab",
-            // AppKit and AX state use the main actor. File writes and commands use worker queues.
+            // App state uses the main actor. AX refreshes and focus commands use worker queues.
             swiftSettings: [
                 .swiftLanguageMode(.v6),
             ],
