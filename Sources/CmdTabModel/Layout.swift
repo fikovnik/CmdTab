@@ -4,6 +4,10 @@ public enum WindowEdge: String, Sendable, CaseIterable {
     case left, right, top, bottom
 }
 
+public enum DisplayDirection: String, Sendable {
+    case previous, next
+}
+
 /// Use AX coordinates with the origin at the top left. The y coordinate increases down.
 public enum Layout {
     public static let fractions: [CGFloat] = [1.0 / 2.0, 2.0 / 3.0, 1.0 / 3.0]
@@ -76,6 +80,46 @@ public enum Layout {
     /// Use the frame tolerance to check whether the window fills the visible display area.
     public static func isMaximized(_ window: CGRect, in visible: CGRect) -> Bool {
         matches(window, visible)
+    }
+
+    /// Use the display with the largest window intersection.
+    public static func displayIndex(containing window: CGRect, in displays: [CGRect]) -> Int? {
+        let areas = displays.map { display -> CGFloat in
+            let intersection = display.intersection(window)
+            return intersection.isNull ? 0 : intersection.width * intersection.height
+        }
+        guard let index = areas.indices.max(by: { areas[$0] < areas[$1] }), areas[index] > 0
+        else { return nil }
+        return index
+    }
+
+    /// Cycle from left to right. If two displays have the same x coordinate, use top to bottom.
+    public static func adjacentDisplay(to index: Int, toward direction: DisplayDirection,
+                                       in displays: [CGRect]) -> Int? {
+        guard displays.count > 1, displays.indices.contains(index) else { return nil }
+        let order = displays.indices.sorted {
+            if displays[$0].minX != displays[$1].minX { return displays[$0].minX < displays[$1].minX }
+            if displays[$0].minY != displays[$1].minY { return displays[$0].minY < displays[$1].minY }
+            return $0 < $1
+        }
+        guard let current = order.firstIndex(of: index) else { return nil }
+        let offset = direction == .previous ? -1 : 1
+        return order[(current + offset + order.count) % order.count]
+    }
+
+    /// Keep the size and relative position. Reduce the size only to fit the destination.
+    public static func moved(_ window: CGRect, from source: CGRect, to destination: CGRect) -> CGRect {
+        let width = min(window.width, destination.width)
+        let height = min(window.height, destination.height)
+        func position(_ origin: CGFloat, size: CGFloat, start: CGFloat, length: CGFloat) -> CGFloat {
+            guard length > size else { return 0.5 }
+            return min(1, max(0, (origin - start) / (length - size)))
+        }
+        let x = position(window.minX, size: window.width, start: source.minX, length: source.width)
+        let y = position(window.minY, size: window.height, start: source.minY, length: source.height)
+        return CGRect(x: (destination.minX + (destination.width - width) * x).rounded(),
+                      y: (destination.minY + (destination.height - height) * y).rounded(),
+                      width: width, height: height)
     }
 
     static func matches(_ a: CGRect, _ b: CGRect) -> Bool {

@@ -64,18 +64,25 @@ enum WindowGeometry {
     /// Return the visible frame in AX coordinates. Use the display with the largest window intersection.
     static func visibleFrame(containing windowFrame: CGRect) -> CGRect? {
         guard let primaryMaxY = primaryMaxY() else { return nil }
-        let screens = NSScreen.screens.map {
-            (screen: $0, frame: Layout.flip($0.frame, primaryMaxY: primaryMaxY))
-        }
-        let best = screens.max {
-            $0.frame.intersection(windowFrame).area < $1.frame.intersection(windowFrame).area
-        }
-        guard let best else { return nil }
-        if best.frame.intersection(windowFrame).isNull {
+        let screens = NSScreen.screens
+        let frames = screens.map { Layout.flip($0.frame, primaryMaxY: primaryMaxY) }
+        guard let index = Layout.displayIndex(containing: windowFrame, in: frames) else {
             guard let main = NSScreen.main else { return nil }
             return Layout.flip(main.visibleFrame, primaryMaxY: primaryMaxY)
         }
-        return Layout.flip(best.screen.visibleFrame, primaryMaxY: primaryMaxY)
+        return Layout.flip(screens[index].visibleFrame, primaryMaxY: primaryMaxY)
+    }
+
+    static func adjacentDisplay(containing windowFrame: CGRect, toward direction: DisplayDirection)
+        -> (source: CGRect, destination: CGRect)? {
+        guard let primaryMaxY = primaryMaxY() else { return nil }
+        let screens = NSScreen.screens
+        let frames = screens.map { Layout.flip($0.frame, primaryMaxY: primaryMaxY) }
+        guard let current = Layout.displayIndex(containing: windowFrame, in: frames),
+              let next = Layout.adjacentDisplay(to: current, toward: direction, in: frames)
+        else { return nil }
+        return (Layout.flip(screens[current].visibleFrame, primaryMaxY: primaryMaxY),
+                Layout.flip(screens[next].visibleFrame, primaryMaxY: primaryMaxY))
     }
 
     /// Use the primary display height for every AX coordinate conversion.
@@ -114,9 +121,4 @@ enum WindowGeometry {
                                   _ on: Bool) -> Bool {
         element.set(attribute, on as CFBoolean) == .success
     }
-}
-
-private extension CGRect {
-    /// Return zero for a `.null` intersection.
-    var area: CGFloat { isNull ? 0 : width * height }
 }

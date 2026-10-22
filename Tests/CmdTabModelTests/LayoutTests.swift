@@ -207,3 +207,91 @@ final class LayoutTests: XCTestCase {
         XCTAssertFalse(Layout.isMaximized(Layout.frame(edge: .left, fraction: 0.5, in: v), in: v))
     }
 }
+
+final class DisplayMoveTests: XCTestCase {
+    private let displays = [
+        Fixture.mainAppKitFrame,
+        Fixture.portrait,
+        CGRect(x: 2560, y: 0, width: 1920, height: 1080),
+        CGRect(x: 0, y: -1080, width: 1920, height: 1080),
+    ]
+
+    func testDisplaySelectionUsesTheLargestIntersection() {
+        let window = CGRect(x: -200, y: 100, width: 800, height: 500)
+        XCTAssertEqual(Layout.displayIndex(containing: window, in: displays), 0)
+        XCTAssertEqual(Layout.displayIndex(containing: window.offsetBy(dx: -500, dy: 0), in: displays), 1)
+    }
+
+    func testDisplaySelectionRejectsOffscreenWindowsAndEmptyDisplays() {
+        XCTAssertNil(Layout.displayIndex(containing: CGRect(x: 8000, y: 8000, width: 300, height: 200),
+                                        in: displays))
+        XCTAssertNil(Layout.displayIndex(containing: .zero, in: displays))
+        XCTAssertNil(Layout.displayIndex(containing: Fixture.mainVisible, in: []))
+    }
+
+    func testDisplayOrderUsesPositionAndWrapsAtBothEnds() {
+        XCTAssertEqual(Layout.adjacentDisplay(to: 1, toward: .next, in: displays), 3)
+        XCTAssertEqual(Layout.adjacentDisplay(to: 3, toward: .next, in: displays), 0)
+        XCTAssertEqual(Layout.adjacentDisplay(to: 0, toward: .next, in: displays), 2)
+        XCTAssertEqual(Layout.adjacentDisplay(to: 2, toward: .next, in: displays), 1)
+        XCTAssertEqual(Layout.adjacentDisplay(to: 1, toward: .previous, in: displays), 2)
+        XCTAssertEqual(Layout.adjacentDisplay(to: 0, toward: .previous, in: displays), 3)
+    }
+
+    func testNoMoveExistsWithoutAnotherDisplay() {
+        for direction in [DisplayDirection.previous, .next] {
+            XCTAssertNil(Layout.adjacentDisplay(to: 0, toward: direction, in: []))
+            XCTAssertNil(Layout.adjacentDisplay(to: 0, toward: direction, in: [Fixture.mainVisible]))
+            XCTAssertNil(Layout.adjacentDisplay(to: -1, toward: direction, in: displays))
+            XCTAssertNil(Layout.adjacentDisplay(to: displays.count, toward: direction, in: displays))
+        }
+    }
+
+    func testMovePreservesSizeAndCenterOnAPortraitDisplay() {
+        let window = Layout.centered(CGRect(x: 0, y: 0, width: 600, height: 400), in: Fixture.mainVisible)
+        let moved = Layout.moved(window, from: Fixture.mainVisible, to: Fixture.portrait)
+        XCTAssertEqual(moved, CGRect(x: -1020, y: 540, width: 600, height: 400))
+    }
+
+    func testMovePreservesRelativePositionBetweenDifferentDisplaySizes() {
+        let source = CGRect(x: 0, y: 30, width: 2000, height: 1200)
+        let destination = CGRect(x: -1000, y: -800, width: 1000, height: 800)
+        let moved = Layout.moved(CGRect(x: 400, y: 230, width: 400, height: 400),
+                                 from: source, to: destination)
+        XCTAssertEqual(moved, CGRect(x: -850, y: -700, width: 400, height: 400))
+    }
+
+    func testMoveKeepsAWindowAtTheRightAndBottomEdges() {
+        let source = Fixture.mainVisible
+        let window = CGRect(x: source.maxX - 600, y: source.maxY - 400, width: 600, height: 400)
+        let moved = Layout.moved(window, from: source, to: Fixture.portrait)
+        XCTAssertEqual(moved.size, window.size)
+        XCTAssertEqual(moved.maxX, Fixture.portrait.maxX)
+        XCTAssertEqual(moved.maxY, Fixture.portrait.maxY)
+    }
+
+    func testMoveShrinksOnlyDimensionsThatExceedTheDestination() {
+        let destination = CGRect(x: 3000, y: 40, width: 800, height: 600)
+        let window = CGRect(x: 100, y: 100, width: 1200, height: 400)
+        let moved = Layout.moved(window, from: Fixture.mainVisible, to: destination)
+        XCTAssertEqual(moved.width, 800)
+        XCTAssertEqual(moved.height, 400)
+        XCTAssertTrue(destination.contains(moved))
+    }
+
+    func testMoveBringsAPartlyOffscreenWindowInsideTheDestination() {
+        let window = CGRect(x: -300, y: 1300, width: 600, height: 400)
+        let moved = Layout.moved(window, from: Fixture.mainVisible, to: Fixture.portrait)
+        XCTAssertEqual(moved.minX, Fixture.portrait.minX)
+        XCTAssertEqual(moved.maxY, Fixture.portrait.maxY)
+        XCTAssertTrue(Fixture.portrait.contains(moved))
+    }
+
+    func testMoveCentersAWindowThatFillsTheSource() {
+        let destination = CGRect(x: 2560, y: 0, width: 3840, height: 2160)
+        let moved = Layout.moved(Fixture.mainVisible, from: Fixture.mainVisible, to: destination)
+        XCTAssertEqual(moved.size, Fixture.mainVisible.size)
+        XCTAssertEqual(moved.midX, destination.midX, accuracy: 0.5)
+        XCTAssertEqual(moved.midY, destination.midY, accuracy: 0.5)
+    }
+}

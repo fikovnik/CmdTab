@@ -7,16 +7,20 @@ import CmdTabModel
 final class WindowActionHost {
     /// Keep the position and size before maximize so the next press can restore them.
     private var restoreFrames: [CGWindowID: CGRect] = [:]
-    private var tileRequest = 0
+    private var frameRequest = 0
 
     func run(_ action: Action) {
-        tileRequest += 1
+        frameRequest += 1
         Diagnostics.note("action: \(action)")
         switch action {
-        case .tile(let edge): tile(edge)
+        case .tile(let edge):
+            changeFrame { [weak self] in self?.applyTile(edge, target: $0) }
         case .center: center()
         case .toggleFullScreen: toggleFullScreen()
         case .toggleMaximize: toggleMaximize()
+        case .moveToDisplay(let direction):
+            guard NSScreen.screens.count > 1 else { return }
+            changeFrame { [weak self] in self?.moveToDisplay(direction, target: $0) }
         case .desktop(.number(let number)): SpaceSwitcher.activate(desktop: number)
         case .desktop(.previous): SpaceSwitcher.step(-1)
         case .desktop(.next): SpaceSwitcher.step(1)
@@ -48,29 +52,29 @@ final class WindowActionHost {
         }
     }
 
-    private func tile(_ edge: WindowEdge) {
+    private func changeFrame(_ apply: @escaping @MainActor (WindowGeometry.Target) -> Void) {
         guard let target = WindowGeometry.focused() else { return }
         if WindowGeometry.isFullScreen(target.window) == true {
             guard WindowGeometry.setFullScreen(false, for: target.window) else {
                 Diagnostics.error("could not exit full screen id=\(target.id)")
                 return
             }
-            finishTile(edge, target: target, request: tileRequest,
-                       deadline: ProcessInfo.processInfo.systemUptime + 3)
-        } else { applyTile(edge, target: target) }
+            finishFrameChange(target: target, request: frameRequest,
+                              deadline: ProcessInfo.processInfo.systemUptime + 3, apply: apply)
+        } else { apply(target) }
     }
 
     /// Wait for full screen exit before you read the display frame.
-    private func finishTile(_ edge: WindowEdge, target: WindowGeometry.Target,
-                            request: Int, deadline: TimeInterval) {
-        guard request == tileRequest else { return }
+    private func finishFrameChange(target: WindowGeometry.Target, request: Int, deadline: TimeInterval,
+                                   apply: @escaping @MainActor (WindowGeometry.Target) -> Void) {
+        guard request == frameRequest else { return }
         if WindowGeometry.isFullScreen(target.window) == false {
-            applyTile(edge, target: target)
+            apply(target)
         } else if ProcessInfo.processInfo.systemUptime >= deadline {
             Diagnostics.error("full screen exit timed out id=\(target.id)")
         } else {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-                self?.finishTile(edge, target: target, request: request, deadline: deadline)
+                self?.finishFrameChange(target: target, request: request, deadline: deadline, apply: apply)
             }
         }
     }
@@ -79,6 +83,16 @@ final class WindowActionHost {
         guard let current = WindowGeometry.frame(of: target.window),
               let visible = WindowGeometry.visibleFrame(containing: current) else { return }
         WindowGeometry.setFrame(Layout.next(edge: edge, window: current, in: visible), on: target)
+    }
+
+    private func moveToDisplay(_ direction: DisplayDirection, target: WindowGeometry.Target) {
+        guard let current = WindowGeometry.frame(of: target.window),
+              let displays = WindowGeometry.adjacentDisplay(containing: current, toward: direction)
+        else { return }
+        if let restore = restoreFrames[target.id] {
+            restoreFrames[target.id] = Layout.moved(restore, from: displays.source, to: displays.destination)
+        }
+        WindowGeometry.setFrame(Layout.moved(current, from: displays.source, to: displays.destination), on: target)
     }
 
     /// Apply center actions only to windows outside full screen.

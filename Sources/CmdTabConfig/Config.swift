@@ -141,6 +141,11 @@ public struct Config: Sendable {
                 throw ConfigError("tile: expected left/right/top/bottom/center, got \"\(value)\"")
             }
             return .tile(edge)
+        case "move-to-display":
+            guard let direction = DisplayDirection(rawValue: value) else {
+                throw ConfigError("move-to-display: expected previous or next, got \"\(value)\"")
+            }
+            return .moveToDisplay(direction)
         case "switch-desktop":
             if value == "previous" { return .desktop(.previous) }
             if value == "next" { return .desktop(.next) }

@@ -15,6 +15,8 @@ final class ConfigTests: XCTestCase {
             XCTAssertEqual(config.bindings.count, 2)
             XCTAssertEqual(try action(config, "cmd-tab"), .switcher(.allWindows))
             XCTAssertEqual(try action(config, "cmd-grave"), .switcher(.currentApp))
+            XCTAssertNil(try action(config, "shift-ctrl-alt-cmd-["))
+            XCTAssertNil(try action(config, "shift-ctrl-alt-cmd-]"))
         }
     }
 
@@ -48,6 +50,20 @@ final class ConfigTests: XCTestCase {
         """#)
         XCTAssertEqual(config.errors, [])
         XCTAssertEqual(config.bindings, Config.defaults.bindings)
+    }
+
+    func testDisplayMoveBindingsRequireExplicitConfiguration() throws {
+        let config = parse(#"""
+        { "keys": {
+            "shift-ctrl-alt-cmd-[": "move-to-display:previous",
+            "ctrl-]": "move-to-display:next"
+        } }
+        """#)
+        XCTAssertEqual(config.errors, [])
+        XCTAssertEqual(config.bindings.count, 4)
+        XCTAssertEqual(try action(config, "shift-ctrl-alt-cmd-["), .moveToDisplay(.previous))
+        XCTAssertNil(try action(config, "shift-ctrl-alt-cmd-]"))
+        XCTAssertEqual(try action(config, "ctrl-]"), .moveToDisplay(.next))
     }
 
     func testUnknownFieldsAndSectionsProduceErrors() throws {
@@ -207,6 +223,8 @@ final class ConfigTests: XCTestCase {
             ("switch-all-windows", .switcher(.allWindows)), ("switch-app-windows", .switcher(.currentApp)),
             ("tile:bottom", .tile(.bottom)), ("tile:center", .center),
             ("toggle-fullscreen", .toggleFullScreen), ("toggle-maximize", .toggleMaximize),
+            ("move-to-display:previous", .moveToDisplay(.previous)),
+            ("move-to-display:next", .moveToDisplay(.next)),
             ("switch-desktop:7", .desktop(.number(7))), ("switch-desktop:16", .desktop(.number(16))),
             ("switch-desktop:previous", .desktop(.previous)), ("switch-desktop:next", .desktop(.next)),
             ("shell: echo a:b", .shell("echo a:b")), ("applescript: beep", .appleScript("beep")),
@@ -223,6 +241,11 @@ final class ConfigTests: XCTestCase {
         for spec in ["switch-desktop:0", "switch-desktop:17", "switch-desktop:two"] {
             XCTAssertThrowsError(try Config.action(for: spec)) { error in
                 XCTAssertTrue("\(error)".contains("expected 1-16, previous or next"))
+            }
+        }
+        for spec in ["move-to-display:", "move-to-display:left", "move-to-display:Next", "move-to-display:1"] {
+            XCTAssertThrowsError(try Config.action(for: spec)) { error in
+                XCTAssertTrue("\(error)".contains("expected previous or next"))
             }
         }
         for spec in ["shell:", "applescript: \n", "unknown"] {

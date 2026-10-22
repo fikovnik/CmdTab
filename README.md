@@ -101,6 +101,8 @@ If you omit a switcher action, CmdTab keeps its default shortcut.
     "shift-ctrl-alt-cmd-up": "tile:top",
     "shift-ctrl-alt-cmd-down": "tile:bottom",
     "shift-ctrl-alt-cmd-c": "tile:center",
+    "shift-ctrl-alt-cmd-[": "move-to-display:previous",
+    "shift-ctrl-alt-cmd-]": "move-to-display:next",
     "shift-alt-cmd-f": "toggle-fullscreen",
     "shift-alt-cmd-m": "toggle-maximize",
     "ctrl-alt-cmd-1": "switch-desktop:1",
@@ -168,6 +170,7 @@ For actions without an argument, use only the name, for example `toggle-maximize
 | `tile`               | `left`, `right`, `top`, `bottom`, or `center` | Move and resize the window at an edge, or center it                                            |
 | `toggle-fullscreen`  | None                                          | Enter or exit native full screen                                                               |
 | `toggle-maximize`    | None                                          | Fill the display area outside the menu bar and Dock, or restore the previous position and size |
+| `move-to-display`    | `previous` or `next`                          | Move the focused window to the previous or next display                                        |
 | `switch-desktop`     | A desktop number from `1` to `16`             | Show the desktop with that number                                                              |
 | `switch-desktop`     | `previous` or `next`                          | Show the previous or next Space, with full screen Spaces in the sequence                       |
 | `shell`              | A nonempty shell command                      | Run the command with `/bin/sh -c`                                                              |
@@ -188,7 +191,13 @@ If its frame matches a centered fraction, the action uses the next fraction.
 Maximize keeps the menu bar and Dock available.
 If CmdTab has no previous position and size, restore uses the left half.
 Center and maximize have no effect on full screen windows.
-An edge action exits full screen before it changes the window.
+Edge actions and display moves exit full screen before they change the window.
+
+Display moves cycle from left to right and wrap at both ends.
+If displays have the same horizontal position, the order is top to bottom.
+A move keeps the window size and its relative position within the available area.
+If the destination is too small, the move reduces the window size to fit.
+With one display, these actions have no effect.
 
 Desktop numbers exclude full screen Spaces.
 Previous and next stop at the first or last Space.

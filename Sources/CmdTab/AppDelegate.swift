@@ -213,6 +213,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         "shift-ctrl-alt-cmd-up":    "tile:top",
         "shift-ctrl-alt-cmd-down":  "tile:bottom",
 
+        "shift-ctrl-alt-cmd-[": "move-to-display:previous",
+        "shift-ctrl-alt-cmd-]": "move-to-display:next",
+
         "shift-alt-cmd-f": "toggle-fullscreen",
         "shift-alt-cmd-m": "toggle-maximize",
 

@@ -1,4 +1,5 @@
 import Carbon.HIToolbox
+import CmdTabModel
 import XCTest
 @testable import CmdTabConfig
 
@@ -77,6 +78,27 @@ final class HotkeyStateTests: XCTestCase {
         XCTAssertEqual(state.handle(.keyDown, key: chord.keyCode, modifiers: .control), .perform(.tile(.left)))
         XCTAssertEqual(state.handle(.keyUp, key: chord.keyCode, modifiers: []), .consume)
         XCTAssertEqual(state.handle(.keyUp, key: UInt16(kVK_ANSI_A), modifiers: []), .pass)
+    }
+
+    func testConfiguredHyperBracketsMoveToDisplaysAndConsumeTheirKeyReleases() {
+        var state = keyboard()
+        let config = Config.parse(Data(#"""
+        { "keys": {
+            "shift-ctrl-alt-cmd-[": "move-to-display:previous",
+            "shift-ctrl-alt-cmd-]": "move-to-display:next"
+        } }
+        """#.utf8))
+        XCTAssertEqual(config.errors, [])
+        state.bindings = config.bindings
+        let hyper: Chord.Modifiers = [.shift, .control, .option, .command]
+        for (key, direction) in [(kVK_ANSI_LeftBracket, DisplayDirection.previous),
+                                 (kVK_ANSI_RightBracket, .next)] {
+            XCTAssertEqual(state.handle(.keyDown, key: UInt16(key), modifiers: hyper),
+                           .perform(.moveToDisplay(direction)))
+            XCTAssertNil(state.hold)
+            XCTAssertEqual(state.handle(.keyUp, key: UInt16(key), modifiers: []), .consume)
+            XCTAssertEqual(state.handle(.keyDown, key: UInt16(key), modifiers: hyper.subtracting(.shift)), .pass)
+        }
     }
 
     func testReloadEndsTraversalButStillConsumesTheTriggerRelease() {

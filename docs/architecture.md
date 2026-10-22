@@ -147,7 +147,12 @@ External commands use `Process` on a worker queue.
 Only maximize needs a stored restore frame.
 The host removes obsolete restore entries before a maximize action.
 Full screen exit is asynchronous.
-An edge action waits for exit and reads a new frame before the resize.
+Edge actions and display moves wait for exit and read a new frame before the resize.
+
+Display moves use the largest window intersection to select the source display.
+They cycle through displays from left to right, then top to bottom, with wrap at both ends.
+They preserve the window size and relative position, but reduce dimensions that exceed the destination area.
+They also move any stored restore frame to the destination display.
 
 All AX elements use a process-wide 100 ms timeout.
 The timeout limits each call, not a complete scan.

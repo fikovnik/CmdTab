@@ -17,6 +17,7 @@ public enum Action: Sendable, Equatable {
     case center
     case toggleFullScreen
     case toggleMaximize
+    case moveToDisplay(DisplayDirection)
     case desktop(Desktop)
     case shell(String)
     case appleScript(String)
