@@ -271,5 +271,7 @@ See the [application model](docs/architecture.md) for implementation details and
 
 - [AltTab](https://github.com/lwouis/alt-tab-macos): window focus and focus order.
 - [InstantSpaceSwitcher](https://github.com/jurplel/InstantSpaceSwitcher): Dock swipe fields.
+- [OmniWM](https://github.com/OmniNull/OmniWM): macOS window manager with Niri and Hyprland layouts.
+- [Rift](https://github.com/acsandmann/rift): another window manager inspired by Niri, support native desktops somehow and in Rust.
 - [yabai](https://github.com/koekeishiya/yabai): private WindowServer declarations and focus event records.
 - [ShiftIt](https://github.com/fikovnik/ShiftIt): my previous attempt at window management.
