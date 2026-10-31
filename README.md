@@ -240,6 +240,7 @@ This permission also permits CmdTab to read window titles from other Spaces.
 4. Turn off **Diagnostic Logging**.
 
 **Open Diagnostics** appears only when **Diagnostic Logging** is on.
+A small blue dot beside the menu bar icon shows that diagnostics are enabled.
 CmdTab saves this preference across restarts.
 It writes events to the log file as they occur.
 

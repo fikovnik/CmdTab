@@ -17,6 +17,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var configMarker = ""
     private var menuIcon = MenuIcon.desktopNumber
     private var configErrors: [String] = []
+    private static let diagnosticIndicator = NSImage(size: NSSize(width: 8, height: 18), flipped: false) { _ in
+        NSColor(srgbRed: 0, green: 0.3, blue: 0.65, alpha: 1).setFill()
+        NSBezierPath(ovalIn: NSRect(x: 1, y: 6, width: 6, height: 6)).fill()
+        return true
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AXUIElement.configureTimeout()
@@ -86,6 +91,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func updateStatusTitle() {
+        guard let button = statusItem?.button else { return }
         let icon: String
         switch menuIcon {
         case .desktopNumber:
@@ -96,7 +102,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .literal(let text):
             icon = text
         }
-        statusItem?.button?.title = icon + configMarker + tapMarker
+        button.title = icon + configMarker + tapMarker
+        button.image = Diagnostics.isLoggingEnabled ? Self.diagnosticIndicator : nil
+        button.imagePosition = .imageTrailing
+        button.toolTip = Diagnostics.isLoggingEnabled ? "Diagnostics enabled" : nil
     }
 
     /// Replace the configuration snapshot on launch and reload.
@@ -147,6 +156,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Diagnostics.setLoggingEnabled(!Diagnostics.isLoggingEnabled)
         sender.state = Diagnostics.isLoggingEnabled ? .on : .off
         openDiagnosticsItem.isHidden = !Diagnostics.isLoggingEnabled
+        updateStatusTitle()
         if Diagnostics.isLoggingEnabled { logDiagnosticState() }
     }
 
