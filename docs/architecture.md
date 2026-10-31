@@ -187,21 +187,22 @@ This restores Space membership after a disconnect or resolution change.
 
 `Diagnostics` is the single logging entry point.
 
-- `error` records an error in the unified log and recent event list.
-- `note` records routine events only when diagnostic logging is on.
-- `trace` saves a state report regardless of the logging setting.
+- `error` always records an error in the unified log.
+- `note` records routine events only when diagnostics are on.
+- Both append events to the daily file when diagnostics are on.
 
 Routine message construction is lazy.
-Error messages remain available when tracing is off.
-The recent event list has 300 entries.
-The menu preference controls routine recording in every build.
+The menu preference persists across restarts and applies to every build.
+The log file contains state reports from launch, diagnostics activation, and **Open Diagnostics**.
 
-`DiagnosticLog` owns the file queue and rotation.
-`trace` waits for earlier file writes before adding the report.
-App termination flushes the queue.
+`DiagnosticLog` appends each event on a serial queue.
+It selects `YYYY-MM-DD.log` from the local date of the event.
+Event timestamps use the same time zone and include the UTC offset.
+It keeps files from previous dates and has no size limit.
+**Open Diagnostics** and app termination flush the queue.
 A write failure goes to the unified log.
 
-A menu report reads tracked records without refreshing them.
+A state report reads tracked records without a refresh.
 A command-line report first scans windows in its own process.
 It cannot inspect another CmdTab process.
 

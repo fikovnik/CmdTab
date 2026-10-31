@@ -8,6 +8,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let host = WindowActionHost()
     private lazy var tap = HotkeyTap(switcher: switcher, host: host)
     private var statusItem: NSStatusItem?
+    private let openDiagnosticsItem = NSMenuItem(title: "Open Diagnostics",
+                                                action: #selector(openDiagnostics), keyEquivalent: "")
     private var permissionTimer: Timer?
     /// Show "…" before tap creation and "!" after a tap creation failure.
     private var tapMarker = "…"
@@ -57,6 +59,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
+        logDiagnosticState()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -115,9 +118,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                    keyEquivalent: "")
         logging.target = self
         logging.state = Diagnostics.isLoggingEnabled ? .on : .off
-        menu.addItem(withTitle: "Write Diagnostics",
-                     action: #selector(writeDiagnostics),
-                     keyEquivalent: "").target = self
+        openDiagnosticsItem.target = self
+        openDiagnosticsItem.isHidden = !Diagnostics.isLoggingEnabled
+        menu.addItem(openDiagnosticsItem)
         menu.addItem(.separator())
         menu.addItem(withTitle: "Accessibility Settings…",
                      action: #selector(openAccessibilitySettings),
@@ -143,22 +146,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func toggleDiagnosticLogging(_ sender: NSMenuItem) {
         Diagnostics.setLoggingEnabled(!Diagnostics.isLoggingEnabled)
         sender.state = Diagnostics.isLoggingEnabled ? .on : .off
-        if Diagnostics.isLoggingEnabled {
-            Diagnostics.note(tap.diagnosticSummary)
-            Diagnostics.note(switcher.diagnosticSummary)
-        }
+        openDiagnosticsItem.isHidden = !Diagnostics.isLoggingEnabled
+        if Diagnostics.isLoggingEnabled { logDiagnosticState() }
     }
 
-    @objc private func writeDiagnostics() {
-        do {
-            try Diagnostics.trace("menu", context: tap.diagnosticSummary + "\n" + switcher.diagnosticSummary
-                                  + "\nConfiguration errors: " + configErrors.joined(separator: "; "))
-            NSWorkspace.shared.selectFile(Diagnostics.traceURL.path,
-                                          inFileViewerRootedAtPath: Diagnostics.traceURL.deletingLastPathComponent().path)
-        } catch {
+    private func logDiagnosticState() {
+        Diagnostics.note(Diagnostics.report(context: tap.diagnosticSummary + "\n" + switcher.diagnosticSummary
+                                            + "\nConfiguration errors: " + configErrors.joined(separator: "\n")))
+    }
+
+    @objc private func openDiagnostics() {
+        logDiagnosticState()
+        Diagnostics.flush()
+        if !NSWorkspace.shared.open(Diagnostics.fileURL) {
             let alert = NSAlert()
-            alert.messageText = "Could not write diagnostics"
-            alert.informativeText = error.localizedDescription
+            alert.messageText = "Could not open diagnostics"
+            alert.informativeText = Diagnostics.fileURL.path
             alert.alertStyle = .warning
             alert.runModal()
         }

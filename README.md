@@ -236,12 +236,19 @@ This permission also permits CmdTab to read window titles from other Spaces.
 
 1. Select **Diagnostic Logging** from the CmdTab menu.
 2. Reproduce the fault.
-3. Select **Write Diagnostics** before you restart the app.
+3. Select **Open Diagnostics** to open the current log file.
 4. Turn off **Diagnostic Logging**.
 
-Reports and events go to `~/Library/Logs/CmdTab/trace.log`.
-CmdTab keeps the previous log as `trace.previous.log`.
-Reports include window titles and configuration details.
+**Open Diagnostics** appears only when **Diagnostic Logging** is on.
+CmdTab saves this preference across restarts.
+It writes events to the log file as they occur.
+
+Each local date has one file at `~/Library/Logs/CmdTab/YYYY-MM-DD.log`.
+Event timestamps use local time and include the UTC offset.
+CmdTab appends to the same file after a restart and keeps files from previous dates.
+
+State reports appear at launch, when you enable diagnostics, and when you select **Open Diagnostics**.
+Logs include window titles and configuration details.
 Review these files before you share them.
 
 Errors remain available in Console when diagnostic logging is off.

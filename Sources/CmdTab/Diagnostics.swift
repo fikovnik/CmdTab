@@ -7,12 +7,8 @@ private let logger = Logger(subsystem: "net.fikovnik.cmdtab", category: "diagnos
 
 @MainActor
 enum Diagnostics {
-    /// Keep recent events in memory. Routine events require the menu logging setting.
-    private static var events: [String] = []
     private static let preferenceKey = "diagnosticLoggingEnabled"
     private(set) static var isLoggingEnabled = UserDefaults.standard.bool(forKey: preferenceKey)
-
-    private static let capacity = 300
 
     /// Build routine messages only when diagnostic logging is on.
     static func note(_ text: @autoclosure () -> String) {
@@ -29,10 +25,10 @@ enum Diagnostics {
     }
 
     private static func record(_ message: String, level: String) {
-        let entry = "\(Date().ISO8601Format(.init(includingFractionalSeconds: true))) [\(level)] \(message)"
-        events.append(entry)
-        if events.count > capacity { events.removeFirst(events.count - capacity) }
-        if isLoggingEnabled { log.append(entry + "\n") }
+        guard isLoggingEnabled else { return }
+        let date = Date()
+        let entry = "\(log.timestamp(for: date)) [\(level)] \(message)\n"
+        log.append(entry, at: date)
     }
 
     static func setLoggingEnabled(_ enabled: Bool) {
@@ -47,9 +43,9 @@ enum Diagnostics {
         log.flush()
     }
 
-    static let traceURL = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Library/Logs/CmdTab/trace.log")
-    private static let log = DiagnosticLog(url: traceURL)
+    static var fileURL: URL { log.url() }
+    private static let log = DiagnosticLog(directory: FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Logs/CmdTab"))
 
     /// Read the tracked state without a refresh. A refresh can erase the failure state.
     static func report(context: String = "") -> String {
@@ -84,9 +80,6 @@ enum Diagnostics {
         out += "\n== preview cache ==\n"
         out += WindowPreview.shared.cacheReport()
 
-        out += "\n== recent events ==\n"
-        for event in events { out += "  \(event)\n" }
-
         out += "\n== apps ==\n"
         let windows = Array(tracker.windows.values)
         for (pid, app) in WindowTracker.regularApps().sorted(by: { $0.key < $1.key }) {
@@ -96,12 +89,5 @@ enum Diagnostics {
             out += " nonStandard=\(own.filter { !$0.isStandard }.count)\n"
         }
         return out
-    }
-
-    /// Save the current report after all queued events. Ignore the diagnostic logging setting.
-    static func trace(_ reason: String, context: String = "") throws {
-        var entry = "\n\n===== \(Date()) — \(reason) =====\n"
-        entry += report(context: context)
-        try log.appendAndWait(entry)
     }
 }
